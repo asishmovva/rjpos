@@ -4,13 +4,38 @@ import {
   ExceptionFilter,
   Injectable,
   NestMiddleware,
+  type CallHandler,
+  type ExecutionContext,
+  type NestInterceptor,
 } from '@nestjs/common';
 import type { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'node:crypto';
 import { log, sanitizeLogText } from '@rjpos/logging';
 import { ReadinessUnavailableException } from './health.js';
+import { PosError } from '@rjpos/database';
+import { map, type Observable } from 'rxjs';
 
 export type RequestWithId = Request & { requestId: string };
+
+function jsonSafe(value: unknown): unknown {
+  if (typeof value === 'bigint') return value.toString();
+  if (Array.isArray(value)) return value.map(jsonSafe);
+  if (value && typeof value === 'object') {
+    if (value instanceof Date) return value.toISOString();
+    if ('toJSON' in value && typeof value.toJSON === 'function') {
+      return jsonSafe(value.toJSON());
+    }
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, jsonSafe(item)]));
+  }
+  return value;
+}
+
+@Injectable()
+export class BigIntJsonInterceptor implements NestInterceptor {
+  intercept(_context: ExecutionContext, next: CallHandler): Observable<unknown> {
+    return next.handle().pipe(map(jsonSafe));
+  }
+}
 
 @Injectable()
 export class RequestIdMiddleware implements NestMiddleware {
@@ -36,6 +61,16 @@ export class ErrorEnvelopeFilter implements ExceptionFilter {
       typeof exception.getStatus === 'function'
         ? exception.getStatus()
         : 500;
+    if (exception instanceof PosError) {
+      response.status(exception.httpStatus).json({
+        error: {
+          code: exception.code,
+          message: 'The request could not be completed.',
+          requestId: request.requestId,
+        },
+      });
+      return;
+    }
     if (exception instanceof ReadinessUnavailableException) {
       this.writeLog('warn', 'Health readiness check failed', {
         requestId: request.requestId,

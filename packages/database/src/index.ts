@@ -6,6 +6,27 @@ export {
 } from './inventory-reservations.js';
 export { recordAudit } from './audit.js';
 export {
+  lookupCatalog,
+  type CatalogLookupInput,
+  type CatalogLookupResult,
+} from './catalog.js';
+export {
+  adjustInventory,
+  getInventorySnapshot,
+  postOpeningBalance,
+} from './inventory.js';
+export { closeRegisterSession, openRegisterSession } from './register-sessions.js';
+export {
+  checkoutCash,
+  checkoutTerminal,
+  finalizeTerminalAttempt,
+  type CheckoutContext,
+  type CheckoutLine,
+  type CheckoutResult,
+} from './checkout.js';
+export { PosError } from './pos-errors.js';
+export { getReceipt, refundOrder, searchOrders, voidOrder } from './orders.js';
+export {
   findProductForOrganization,
   requireRegisterContext,
   updateProductForOrganization,

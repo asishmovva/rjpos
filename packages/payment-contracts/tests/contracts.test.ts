@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   paymentAttemptStatuses,
+  SimulatedTerminalProvider,
   type PaymentAttemptStatus,
   type TerminalPaymentCommand,
   type TerminalPaymentProvider,
@@ -40,5 +41,67 @@ describe('provider-neutral payment contracts', () => {
       'authorize' | 'cancel' | 'getStatus' | 'refund'
     >();
     expectTypeOf<'provider' extends keyof TerminalPaymentCommand ? true : false>().toEqualTypeOf<false>();
+  });
+});
+
+describe('simulated terminal provider', () => {
+  const expected = {
+    APPROVED: 'SUCCEEDED',
+    DECLINED: 'DECLINED',
+    CANCELLED: 'CANCELLED',
+    TIMEOUT: 'UNKNOWN',
+    UNKNOWN: 'UNKNOWN',
+    NETWORK_LOST: 'UNKNOWN',
+    DUPLICATE_CALLBACK: 'SUCCEEDED',
+    LATE_CALLBACK: 'UNKNOWN',
+  } as const;
+
+  it.each(Object.entries(expected))(
+    'models %s without provider-specific fields',
+    async (outcome, status) => {
+      const provider = new SimulatedTerminalProvider(
+        outcome as keyof typeof expected,
+      );
+      const result = await provider.authorize({
+        attemptId: 'attempt-1',
+        amountMinor: '1299',
+        currency: 'USD',
+        idempotencyKey: `key-${outcome}`,
+      });
+      expect(result.status).toBe(status);
+      expect(provider.authorizeCallCount).toBe(1);
+    },
+  );
+
+  it('deduplicates submissions and exposes duplicate callbacks safely', async () => {
+    const provider = new SimulatedTerminalProvider('DUPLICATE_CALLBACK');
+    const command = {
+      attemptId: 'attempt-duplicate',
+      amountMinor: '500',
+      currency: 'USD' as const,
+      idempotencyKey: 'same-key',
+    };
+    const first = await provider.authorize(command);
+    const second = await provider.authorize(command);
+    expect(second).toEqual(first);
+    expect(provider.authorizeCallCount).toBe(1);
+    expect(provider.callbackResults).toEqual([first, first]);
+  });
+
+  it('does not retry uncertain outcomes and supports explicit late callback', async () => {
+    const provider = new SimulatedTerminalProvider('LATE_CALLBACK');
+    const initial = await provider.authorize({
+      attemptId: 'attempt-late',
+      amountMinor: '500',
+      currency: 'USD',
+      idempotencyKey: 'late-key',
+    });
+    expect(initial).toEqual({ status: 'UNKNOWN', failureCode: 'LATE_CALLBACK' });
+    expect(provider.authorizeCallCount).toBe(1);
+    expect(provider.callbackResults).toHaveLength(0);
+    expect(provider.deliverLateCallback('attempt-late')).toEqual({
+      status: 'SUCCEEDED',
+      providerTransactionId: 'sim-attempt-late',
+    });
   });
 });

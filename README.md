@@ -1,6 +1,6 @@
 # RJ POS
 
-RJ POS is a multi-tenant retail point-of-sale platform. Phase 0 establishes the Next.js web application, secure Electron register shell, NestJS API, worker, PostgreSQL, Redis, and shared contracts.
+RJ POS is a multi-tenant retail point-of-sale platform. Phase 0 established the runtime foundation; Phase 1 adds a complete register, sale, receipt, history, void, and refund workflow while retaining the NestJS API, secure Electron boundary, worker, PostgreSQL, Redis, and shared contracts.
 
 ## Local development
 
@@ -24,7 +24,17 @@ pnpm --filter "@rjpos/register" dev
 
 The web application listens explicitly on port 3000. During development, Electron loads `RJPOS_RENDERER_URL` from the repository-root `.env`, falling back to `http://localhost:3000`. It performs a bounded availability check before loading the URL; if the web server remains unavailable, Electron shows a visible error page and logs the failure without entering an automatic reload loop. A packaged Electron application loads its copied local `renderer.html` instead. Renderer code remains sandboxed behind the preload bridge and `hardware:status` IPC; it does not access Prisma or PostgreSQL directly.
 
-Payment provider credentials and certified hardware are intentionally not required for Phase 0. Payment contracts remain provider-neutral for later implementation.
+Payment provider credentials and certified hardware are intentionally not required for Phase 0. The first payment implementation is the simulated terminal contract.
+
+## Phase 1 Core POS
+
+After migrations and seed complete, start `pnpm dev`, open the register, and scan one of the fictional Tito's UPCs (`619947000013`, `619947000020`, `619947000037`, or `619947000044`). The development identity defaults to the seeded Owner, Downtown store, and Register 01. The UI talks only to `NEXT_PUBLIC_RJPOS_API_URL`; Electron remains a secure host for the same Next.js application.
+
+The API is authoritative for current prices, tax, discounts, stock, register state, and payment state. Cash sales complete atomically. The simulated terminal supports approved, declined, cancelled, timeout, unknown, lost-network, duplicate-callback, and late-callback scenarios. Unknown financial outcomes remain pending reconciliation and are never automatically retried.
+
+Core endpoints live below `/api/v1`: catalog lookup, inventory, current store configuration, register sessions, cash/terminal checkout, order history/receipts, voids, and refunds. Development role behavior can be exercised with `x-rjpos-role: OWNER`, `MANAGER`, or `CASHIER`; sensitive operations are enforced by the API.
+
+No external account, payment credential, hardware SDK, or machine-level tool is needed for Phase 1. PostgreSQL remains authoritative; the project does not introduce a second local/offline source of truth. Real processors, certified terminals, scanners, printers, and drawers remain future integrations behind their existing boundaries.
 
 ## Integration-test setup
 

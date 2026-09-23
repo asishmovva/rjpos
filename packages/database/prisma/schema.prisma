@@ -159,6 +159,7 @@ model Organization {
   customers          Customer[]
   orders             Order[]
   payments           Payment[]
+  refundItems        RefundItem[]
   reservationLines   InventoryReservationLine[]
   paymentAccounts    MerchantPaymentAccount[]
   terminals          TerminalDevice[]
@@ -173,6 +174,7 @@ model Store {
   organizationId  String                   @db.Uuid
   name            String
   addressJson     Json?
+  taxRateBasisPoints Int                    @default(0)
   organization    Organization             @relation(fields: [organizationId], references: [id])
   registers       Register[]
   employees       EmployeeStore[]
@@ -200,9 +202,12 @@ model Employee {
   pinHash            String?
   organization       Organization        @relation(fields: [organizationId], references: [id])
   stores             EmployeeStore[]
-  sessions           RegisterSession[]
+  sessions           RegisterSession[]      @relation("RegisterSessionOpenedBy")
   inventoryMovements InventoryMovement[]
+  refunds            Refund[]
+  ageVerifiedOrders  Order[]               @relation("OrderAgeVerifiedBy")
   roles              EmployeeRole[]
+  closedSessions     RegisterSession[]      @relation("RegisterSessionClosedBy")
 
   @@unique([organizationId, id])
   @@index([organizationId, lastName, firstName])
@@ -303,6 +308,8 @@ model Product {
   brand          String?
   active         Boolean          @default(true)
   ageRestricted  Boolean          @default(false)
+  inventoryTracked Boolean        @default(true)
+  taxCategory    String            @default("STANDARD")
   organization   Organization     @relation(fields: [organizationId], references: [id])
   category       Category         @relation(fields: [organizationId, categoryId], references: [organizationId, id])
   variants       ProductVariant[]
@@ -322,6 +329,7 @@ model ProductVariant {
   size               Decimal?                   @db.Decimal(12, 3)
   unit               ProductUnit                @default(EACH)
   active             Boolean                    @default(true)
+  costMinor          BigInt?
   organization       Organization               @relation(fields: [organizationId], references: [id])
   product            Product                    @relation(fields: [organizationId, productId], references: [organizationId, id])
   barcodes           Barcode[]
@@ -330,6 +338,7 @@ model ProductVariant {
   inventoryMovements InventoryMovement[]
   orderItems         OrderItem[]
   reservations       InventoryReservationLine[]
+  refundItems        RefundItem[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, sku])
@@ -445,6 +454,7 @@ model RegisterSession {
   storeId           String                @db.Uuid
   registerId        String                @db.Uuid
   employeeId        String                @db.Uuid
+  closedByEmployeeId String?              @db.Uuid
   status            RegisterSessionStatus @default(OPEN)
   openingCashMinor  BigInt
   expectedCashMinor BigInt?
@@ -455,7 +465,8 @@ model RegisterSession {
   organization      Organization          @relation(fields: [organizationId], references: [id])
   store             Store                 @relation(fields: [organizationId, storeId], references: [organizationId, id])
   register          Register              @relation(fields: [organizationId, registerId], references: [organizationId, id])
-  employee          Employee              @relation(fields: [organizationId, employeeId], references: [organizationId, id])
+  employee          Employee              @relation("RegisterSessionOpenedBy", fields: [organizationId, employeeId], references: [organizationId, id])
+  closedByEmployee  Employee?             @relation("RegisterSessionClosedBy", fields: [organizationId, closedByEmployeeId], references: [organizationId, id])
   orders            Order[]
 
   @@unique([organizationId, id])
@@ -550,12 +561,17 @@ model Order {
   taxMinor          BigInt
   totalMinor        BigInt
   currency          String                 @default("USD") @db.Char(3)
+  ageVerifiedAt     DateTime?
+  ageVerifiedByEmployeeId String?          @db.Uuid
+  completedAt       DateTime?
+  voidedAt          DateTime?
   createdAt         DateTime               @default(now())
   organization      Organization           @relation(fields: [organizationId], references: [id])
   store             Store                  @relation(fields: [organizationId, storeId], references: [organizationId, id])
   register          Register               @relation(fields: [organizationId, registerId], references: [organizationId, id])
   session           RegisterSession        @relation(fields: [organizationId, registerSessionId], references: [organizationId, id])
   customer          Customer?              @relation(fields: [organizationId, customerId], references: [organizationId, id])
+  ageVerifiedBy     Employee?              @relation("OrderAgeVerifiedBy", fields: [organizationId, ageVerifiedByEmployeeId], references: [organizationId, id])
   items             OrderItem[]
   payments          Payment[]
   refunds           Refund[]
@@ -583,8 +599,10 @@ model OrderItem {
   taxMinor            BigInt
   totalMinor          BigInt
   currency            String         @default("USD") @db.Char(3)
+  taxCategorySnapshot String         @default("STANDARD")
   order               Order          @relation(fields: [organizationId, orderId], references: [organizationId, id])
   variant             ProductVariant @relation(fields: [organizationId, variantId], references: [organizationId, id])
+  refundItems          RefundItem[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, orderId, id])
@@ -598,6 +616,8 @@ model Payment {
   status         PaymentStatus    @default(CREATED)
   amountMinor    BigInt
   capturedMinor  BigInt           @default(0)
+  tenderedMinor  BigInt?
+  changeDueMinor BigInt?
   currency       String           @default("USD") @db.Char(3)
   order          Order            @relation(fields: [organizationId, orderId], references: [organizationId, id])
   organization   Organization     @relation(fields: [organizationId], references: [id])
@@ -639,13 +659,36 @@ model Refund {
   status         RefundStatus    @default(PENDING)
   amountMinor    BigInt
   currency       String          @default("USD") @db.Char(3)
+  reason         String
+  employeeId     String          @db.Uuid
+  completedAt    DateTime?
   createdAt      DateTime        @default(now())
   order          Order           @relation(fields: [organizationId, orderId], references: [organizationId, id])
   payment        Payment         @relation(fields: [organizationId, paymentId], references: [organizationId, id])
+  employee       Employee        @relation(fields: [organizationId, employeeId], references: [organizationId, id])
   attempts       RefundAttempt[]
+  items          RefundItem[]
 
   @@unique([organizationId, id])
   @@index([organizationId, orderId, createdAt])
+}
+
+model RefundItem {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
+  refundId       String         @db.Uuid
+  orderItemId    String         @db.Uuid
+  variantId      String         @db.Uuid
+  quantity       Int
+  amountMinor    BigInt
+  returnToStock  Boolean        @default(true)
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  refund         Refund         @relation(fields: [organizationId, refundId], references: [organizationId, id])
+  orderItem      OrderItem      @relation(fields: [organizationId, orderItemId], references: [organizationId, id])
+  variant        ProductVariant @relation(fields: [organizationId, variantId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, refundId, orderItemId])
 }
 
 model RefundAttempt {

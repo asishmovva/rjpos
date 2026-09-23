@@ -38,7 +38,7 @@ async function runSmokeVerification(
   };
   console.log(`RJPOS_REGISTER_SMOKE ${JSON.stringify(smokeResult)}`);
   app.exit(
-    result.heading === 'RJ POS' &&
+    result.heading === 'Downtown Register' &&
       result.hardwareStatus === 'simulated' &&
       securityPreferences.contextIsolation === true &&
       securityPreferences.nodeIntegration === false &&
