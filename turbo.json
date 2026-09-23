@@ -6,8 +6,9 @@
     "TEST_STORE_ID",
     "TEST_VARIANT_ID",
     "TEST_ORDER_ID_ONE",
-    "TEST_ORDER_ID_TWO"
-    ,"TEST_REDIS_URL"
+    "TEST_ORDER_ID_TWO",
+    "TEST_REDIS_URL",
+    "RJPOS_RENDERER_URL"
   ],
   "tasks": {
     "build": {
@@ -22,8 +23,6 @@
     "typecheck": {
       "dependsOn": ["^typecheck"]
     },
-    "test": {
-      "dependsOn": ["^build"]
-    }
+    "test": {}
   }
 }

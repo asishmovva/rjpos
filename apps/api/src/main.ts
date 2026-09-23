@@ -1,49 +1,49 @@
 import 'reflect-metadata';
 import {
-  Controller,
-  Get,
-  Injectable,
   MiddlewareConsumer,
   Module,
+  type OnApplicationShutdown,
 } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { randomUUID } from 'node:crypto';
+import { PrismaClient } from '@prisma/client';
 import { ErrorEnvelopeFilter, RequestIdMiddleware } from './foundation.js';
 import { TenantContextService } from './tenant-context.js';
 import { loadEnvironment } from '@rjpos/config';
+import {
+  checkPostgres,
+  checkRedis,
+  HealthController,
+  HealthService,
+  POSTGRES_CHECK,
+  REDIS_CHECK,
+} from './health.js';
 
-@Injectable()
-class HealthService {
-  readiness(): { status: 'ok'; requestId: string } {
-    return { status: 'ok', requestId: randomUUID() };
-  }
-}
-
-@Controller('/api/v1/health')
-class HealthController {
-  constructor(private readonly health: HealthService) {}
-  @Get()
-  getHealth(): { status: 'ok'; requestId: string } {
-    return this.health.readiness();
-  }
-  @Get('/ready')
-  getReadiness(): { status: 'ok'; requestId: string } {
-    return this.health.readiness();
-  }
-}
+const environment = loadEnvironment();
+const prisma = new PrismaClient({
+  datasources: { db: { url: environment.DATABASE_URL } },
+});
 
 @Module({
   controllers: [HealthController],
-  providers: [HealthService, TenantContextService],
+  providers: [
+    HealthService,
+    TenantContextService,
+    { provide: POSTGRES_CHECK, useValue: () => checkPostgres(prisma) },
+    { provide: REDIS_CHECK, useValue: () => checkRedis(environment.REDIS_URL) },
+  ],
 })
-class AppModule {
+class AppModule implements OnApplicationShutdown {
   configure(consumer: MiddlewareConsumer): void {
     consumer.apply(RequestIdMiddleware).forRoutes('*');
   }
+
+  async onApplicationShutdown(): Promise<void> {
+    await prisma.$disconnect();
+  }
 }
 
-loadEnvironment(process.env);
 const app = await NestFactory.create(AppModule);
+app.enableShutdownHooks();
 app.enableVersioning();
 app.enableCors();
 app.useGlobalFilters(new ErrorEnvelopeFilter());

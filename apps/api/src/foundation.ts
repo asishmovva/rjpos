@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 import type { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'node:crypto';
+import { log, sanitizeLogText } from '@rjpos/logging';
+import { ReadinessUnavailableException } from './health.js';
 
 export type RequestWithId = Request & { requestId: string };
 
@@ -21,6 +23,8 @@ export class RequestIdMiddleware implements NestMiddleware {
 
 @Catch()
 export class ErrorEnvelopeFilter implements ExceptionFilter {
+  constructor(private readonly writeLog: typeof log = log) {}
+
   catch(exception: unknown, host: ArgumentsHost): void {
     const context = host.switchToHttp();
     const response = context.getResponse<Response>();
@@ -32,17 +36,42 @@ export class ErrorEnvelopeFilter implements ExceptionFilter {
       typeof exception.getStatus === 'function'
         ? exception.getStatus()
         : 500;
-    response
-      .status(status)
-      .json({
+    if (exception instanceof ReadinessUnavailableException) {
+      this.writeLog('warn', 'Health readiness check failed', {
+        requestId: request.requestId,
+      });
+      response.status(503).json({
         error: {
-          code: status === 500 ? 'INTERNAL_ERROR' : 'REQUEST_FAILED',
-          message:
-            status === 500
-              ? 'An unexpected error occurred.'
-              : 'The request could not be completed.',
+          code: 'NOT_READY',
+          message: 'Required dependencies are unavailable.',
           requestId: request.requestId,
+          dependencies: exception.dependencies,
         },
       });
+      return;
+    }
+    if (status >= 500) {
+      const errorName =
+        exception instanceof Error ? exception.name : typeof exception;
+      const errorMessage =
+        exception instanceof Error
+          ? sanitizeLogText(exception.message)
+          : 'Non-Error value thrown';
+      this.writeLog('error', 'Unexpected server exception', {
+        requestId: request.requestId,
+        errorName,
+        errorMessage,
+      });
+    }
+    response.status(status).json({
+      error: {
+        code: status === 500 ? 'INTERNAL_ERROR' : 'REQUEST_FAILED',
+        message:
+          status === 500
+            ? 'An unexpected error occurred.'
+            : 'The request could not be completed.',
+        requestId: request.requestId,
+      },
+    });
   }
 }

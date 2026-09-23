@@ -7,7 +7,8 @@
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
+    "test": "pnpm test:prepare && turbo run test",
+    "test:prepare": "pnpm --filter @rjpos/database test:prepare",
     "format": "prettier --write ."
   },
   "devDependencies": {

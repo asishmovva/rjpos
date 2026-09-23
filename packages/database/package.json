@@ -8,12 +8,14 @@
     "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "db:deploy": "prisma migrate deploy",
+    "test:prepare": "tsx scripts/prepare-test-database.ts",
+    "db:deploy": "tsx scripts/deploy-development-database.ts",
     "db:seed": "tsx prisma/seed.ts",
     "prisma:generate": "prisma generate"
   },
   "dependencies": {
-    "@prisma/client": "^6.16.2"
+    "@prisma/client": "^6.16.2",
+    "@rjpos/config": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",

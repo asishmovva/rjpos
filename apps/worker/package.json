@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.16.2",
+    "@rjpos/config": "workspace:*",
     "@rjpos/database": "workspace:*",
     "@rjpos/logging": "workspace:*"
   },

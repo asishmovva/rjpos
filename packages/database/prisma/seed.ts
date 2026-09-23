@@ -1,6 +1,8 @@
 import { PrismaClient } from '@prisma/client';
+import { loadEnvironment } from '@rjpos/config';
 
-const prisma = new PrismaClient();
+const environment = loadEnvironment();
+const prisma = new PrismaClient({ datasources: { db: { url: environment.DATABASE_URL } } });
 
 async function main(): Promise<void> {
   const organization = await prisma.organization.upsert({

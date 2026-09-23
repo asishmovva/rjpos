@@ -26,19 +26,17 @@ The schema uses UUID identifiers, PostgreSQL `BIGINT` minor-unit money, organiza
 
 ```powershell
 pnpm install
-$env:DATABASE_URL='postgresql://rjpos:rjpos@127.0.0.1:15432/rjpos'
-$env:TEST_DATABASE_URL=$env:DATABASE_URL
-$env:TEST_REDIS_URL='redis://127.0.0.1:6379'
-pnpm --filter @rjpos/database db:deploy
-pnpm --filter @rjpos/database db:seed
-pnpm exec prisma --version
+Copy-Item .env.test.example .env.test
+docker compose -f docker/docker-compose.yml --profile test up -d --wait postgres-test redis-test
+pnpm --filter "@rjpos/api" test
+pnpm test
 pnpm typecheck
 pnpm lint
 pnpm build
-pnpm exec turbo run test --force
+git diff --check
 ```
 
-The live integration suites cover reservation concurrency, tenant isolation, audit immutability, outbox retry/recovery, Redis readiness, API request IDs/error envelopes, auth/RBAC, configuration validation, and UI token restrictions.
+`pnpm test` prepares only the dedicated test database before running the integration suites. The normalized isolation guard and the distinction between behavioral tests, compile-only packages, missing coverage, and separate Electron runtime evidence are recorded in [final-qa.md](./final-qa.md).
 
 Verified on 2026-09-22 against PostgreSQL 18 and Redis 8:
 
@@ -46,14 +44,21 @@ Verified on 2026-09-22 against PostgreSQL 18 and Redis 8:
 - `pnpm typecheck`: 15/15 workspace projects passed.
 - `pnpm lint`: 15/15 workspace projects passed.
 - `pnpm build`: 15/15 workspace projects passed.
-- `pnpm exec turbo run test --force`: passed with no required tests skipped.
+- `pnpm test`: passed; 49 behavioral tests across 13 runtime packages. The two declaration-only packages are excluded from the behavioral total.
 - Prisma `migrate deploy` on clean PostgreSQL 18: 3/3 migrations applied.
 - Prisma `migrate status`: database schema up to date.
 - Seed: passed and idempotent; fictional organization, Downtown store, Register 01, Demo Owner, Demo Manager, and Demo Cashier verified.
-- Focused evidence: auth/RBAC 2 tests, config 2, UI tokens 1, API IDs/errors/health 4, Electron security 1, tenant/audit/reservation 3, outbox 1.
+- PostgreSQL catalog proof: nine reviewed partial/lookup indexes, two exclusion constraints, one price validity check, `btree_gist`, the audit trigger, and 116/116 matching foreign-key column types.
+- Reservation race: one final-unit winner, no negative availability or losing-transaction residue, active-order uniqueness enforced, and release/conversion/expiration idempotency verified with history retained.
+- Outbox: concurrent claim exclusion, retry, stale recovery, processed state, and at-least-once attempt tracking passed against PostgreSQL.
+- Live API: liveness `200`; readiness `200` with PostgreSQL/Redis up; readiness `503` with Redis confirmed down; readiness recovered to `200` after Redis restart.
+- Focused evidence: API 10, API contracts 3, auth/RBAC 2, config/isolation 10, domain registries 2, event contracts 2, logging 4, payment contracts 2, web shell 3, UI tokens 1, Electron renderer/security behavior 6, tenant/audit/reservation 3, and outbox 1. A separate real Electron smoke launch proved the built entry point, live web rendering, preload bridge, and hardware IPC path.
 
-## Known Warnings
+## Closure Notes
 
-- Several non-database packages still have intentionally small foundation tests; Phase 1 behavior is not represented yet.
+- `@rjpos/api-client` and `@rjpos/hardware-contracts` are legitimately compile-only: they export only TypeScript types/interfaces and no runtime behavior.
+- Logging coverage exposed and fixed automatic/nested sensitive-value redaction; API and worker regression tests passed after the fix.
+- No required Phase 0 check is failed, blocked, or skipped. Phase 0 is complete.
+- Electron unit tests are configuration evidence rather than launch evidence; the independent runtime smoke result is recorded separately in `final-qa.md`.
 - Certified payment integration requires a provider account, documentation, credentials, and certified hardware and remains a stop condition.
 - The Windows host may have an unrelated PostgreSQL listener on 5432; RJ POS uses 15432 in Docker Compose.

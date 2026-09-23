@@ -66,6 +66,9 @@ importers:
       '@rjpos/hardware-contracts':
         specifier: workspace:*
         version: link:../../packages/hardware-contracts
+      dotenv:
+        specifier: ^16.6.1
+        version: 16.6.1
       electron:
         specifier: ^38.1.2
         version: 38.8.6
@@ -90,7 +93,7 @@ importers:
         version: link:../../packages/api-client
       next:
         specifier: ^16.0.0
-        version: 16.3.5(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 16.3.5(@types/node@24.13.6)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       react:
         specifier: ^19.2.0
         version: 19.3.0
@@ -107,12 +110,18 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@24.13.6)(jiti@2.7.0)(tsx@4.23.15)
 
   apps/worker:
     dependencies:
       '@prisma/client':
         specifier: ^6.16.2
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
+      '@rjpos/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@rjpos/database':
         specifier: workspace:*
         version: link:../../packages/database
@@ -144,6 +153,10 @@ importers:
       zod:
         specifier: ^4.1.5
         version: 4.6.5
+    devDependencies:
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@24.13.6)(jiti@2.7.0)(tsx@4.23.15)
 
   packages/auth:
     devDependencies:
@@ -153,6 +166,9 @@ importers:
 
   packages/config:
     dependencies:
+      dotenv:
+        specifier: ^16.6.1
+        version: 16.6.1
       zod:
         specifier: ^4.1.5
         version: 4.6.5
@@ -166,6 +182,9 @@ importers:
       '@prisma/client':
         specifier: ^6.16.2
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
+      '@rjpos/config':
+        specifier: workspace:*
+        version: link:../config
     devDependencies:
       '@types/node':
         specifier: ^24.5.2
@@ -180,15 +199,31 @@ importers:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@24.13.6)(jiti@2.7.0)(tsx@4.23.15)
 
-  packages/domain-types: {}
+  packages/domain-types:
+    devDependencies:
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@24.13.6)(jiti@2.7.0)(tsx@4.23.15)
 
-  packages/events: {}
+  packages/events:
+    devDependencies:
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@24.13.6)(jiti@2.7.0)(tsx@4.23.15)
 
   packages/hardware-contracts: {}
 
-  packages/logging: {}
+  packages/logging:
+    devDependencies:
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@24.13.6)(jiti@2.7.0)(tsx@4.23.15)
 
-  packages/payment-contracts: {}
+  packages/payment-contracts:
+    devDependencies:
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@24.13.6)(jiti@2.7.0)(tsx@4.23.15)
 
   packages/ui:
     devDependencies:
@@ -2963,7 +2998,7 @@ snapshots:
     dependencies:
       content-type: 2.1.0
 
-  next@16.3.5(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
+  next@16.3.5(@types/node@24.13.6)(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
     dependencies:
       '@next/env': 16.3.5
       '@swc/helpers': 0.5.23
@@ -2982,7 +3017,7 @@ snapshots:
       '@next/swc-linux-x64-musl': 16.3.5
       '@next/swc-win32-arm64-msvc': 16.3.5
       '@next/swc-win32-x64-msvc': 16.3.5
-      sharp: 0.35.4
+      sharp: 0.35.4(@types/node@24.13.6)
     transitivePeerDependencies:
       - '@babel/core'
       - '@types/node'
@@ -3216,7 +3251,7 @@ snapshots:
 
   setprototypeof@1.2.0: {}
 
-  sharp@0.35.4:
+  sharp@0.35.4(@types/node@24.13.6):
     dependencies:
       '@img/colour': 1.1.0
       detect-libc: 2.1.2
@@ -3247,6 +3282,7 @@ snapshots:
       '@img/sharp-win32-arm64': 0.35.4
       '@img/sharp-win32-ia32': 0.35.4
       '@img/sharp-win32-x64': 0.35.4
+      '@types/node': 24.13.6
     optional: true
 
   side-channel-list@1.0.1:
