@@ -1,0 +1,28 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "globalPassThroughEnv": [
+    "TEST_DATABASE_URL",
+    "TEST_ORGANIZATION_ID",
+    "TEST_STORE_ID",
+    "TEST_VARIANT_ID",
+    "TEST_ORDER_ID_ONE",
+    "TEST_ORDER_ID_TWO",
+    "TEST_REDIS_URL",
+    "RJPOS_RENDERER_URL"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {},
+    "typecheck": {
+      "dependsOn": ["^typecheck"]
+    },
+    "test": {}
+  }
+}

@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: rjpos
+      POSTGRES_PASSWORD: rjpos
+      POSTGRES_DB: rjpos
+    ports:
+      - '15432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql
+  redis:
+    image: redis:8
+    ports:
+      - '6379:6379'
+  postgres-test:
+    image: postgres:18
+    profiles: ['test']
+    environment:
+      POSTGRES_USER: rjpos_test
+      POSTGRES_PASSWORD: rjpos_test
+      POSTGRES_DB: rjpos_test
+    ports:
+      - '15433:5432'
+    volumes:
+      - postgres-test-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U rjpos_test -d rjpos_test']
+      interval: 2s
+      timeout: 2s
+      retries: 15
+  redis-test:
+    image: redis:8
+    profiles: ['test']
+    ports:
+      - '6380:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 2s
+      retries: 15
+volumes:
+  postgres-data:
+  postgres-test-data:

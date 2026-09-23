@@ -1,0 +1,729 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ProductUnit {
+  EACH
+  ML
+  LITER
+}
+
+enum RegisterStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PaymentAccountStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PaymentEnvironment {
+  SANDBOX
+  PRODUCTION
+}
+
+enum TerminalStatus {
+  UNPAIRED
+  PAIRED
+  CONNECTED
+  DISCONNECTED
+  DECOMMISSIONED
+}
+
+enum RegisterSessionStatus {
+  OPEN
+  CLOSING
+  CLOSED
+}
+
+enum InventoryMovementType {
+  INITIAL
+  SALE
+  SALE_RETURN
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  RECEIVING
+  TRANSFER_IN
+  TRANSFER_OUT
+  DAMAGE
+  VOID_REVERSAL
+}
+
+enum ReservationStatus {
+  ACTIVE
+  CONVERTED
+  RELEASED
+  EXPIRED
+}
+
+enum OrderStatus {
+  DRAFT
+  PENDING_PAYMENT
+  COMPLETED
+  PARTIALLY_REFUNDED
+  REFUNDED
+  VOIDED
+}
+
+enum PaymentKind {
+  CASH
+  TERMINAL
+}
+
+enum PaymentStatus {
+  CREATED
+  PROCESSING
+  AUTHORIZED
+  CAPTURED
+  DECLINED
+  CANCELLED
+  UNKNOWN
+  PARTIALLY_REFUNDED
+  REFUNDED
+}
+
+enum PaymentAttemptStatus {
+  CREATED
+  PROCESSING
+  SUCCEEDED
+  DECLINED
+  CANCELLED
+  UNKNOWN
+  FAILED
+}
+
+enum RefundStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  UNKNOWN
+  CANCELLED
+}
+
+enum RefundAttemptStatus {
+  CREATED
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  UNKNOWN
+  CANCELLED
+}
+
+enum IdempotencyStatus {
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+model Organization {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  name               String
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  stores             Store[]
+  employees          Employee[]
+  employeeStores     EmployeeStore[]
+  roles              Role[]
+  permissions        Permission[]
+  employeeRoles      EmployeeRole[]
+  rolePermissions    RolePermission[]
+  categories         Category[]
+  products           Product[]
+  variants           ProductVariant[]
+  barcodes           Barcode[]
+  prices             Price[]
+  inventoryLevels    InventoryLevel[]
+  inventoryMovements InventoryMovement[]
+  reservations       InventoryReservation[]
+  registers          Register[]
+  sessions           RegisterSession[]
+  customers          Customer[]
+  orders             Order[]
+  payments           Payment[]
+  reservationLines   InventoryReservationLine[]
+  paymentAccounts    MerchantPaymentAccount[]
+  terminals          TerminalDevice[]
+  assignments        TerminalAssignment[]
+  idempotencyKeys    IdempotencyKey[]
+  auditRecords       AuditRecord[]
+  outboxEvents       OutboxEvent[]
+}
+
+model Store {
+  id              String                   @id @default(uuid()) @db.Uuid
+  organizationId  String                   @db.Uuid
+  name            String
+  addressJson     Json?
+  organization    Organization             @relation(fields: [organizationId], references: [id])
+  registers       Register[]
+  employees       EmployeeStore[]
+  prices          Price[]
+  inventoryLevels InventoryLevel[]
+  movements       InventoryMovement[]
+  reservations    InventoryReservation[]
+  sessions        RegisterSession[]
+  customers       Customer[]
+  orders          Order[]
+  paymentAccounts MerchantPaymentAccount[]
+  terminals       TerminalDevice[]
+  assignments     TerminalAssignment[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, name])
+}
+
+model Employee {
+  id                 String              @id @default(uuid()) @db.Uuid
+  organizationId     String              @db.Uuid
+  firstName          String
+  lastName           String
+  status             EmployeeStatus      @default(ACTIVE)
+  pinHash            String?
+  organization       Organization        @relation(fields: [organizationId], references: [id])
+  stores             EmployeeStore[]
+  sessions           RegisterSession[]
+  inventoryMovements InventoryMovement[]
+  roles              EmployeeRole[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, lastName, firstName])
+}
+
+model Role {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  name           String
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  employees      EmployeeRole[]
+  permissions    RolePermission[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, name])
+}
+
+model Permission {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  code           String
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  roles          RolePermission[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, code])
+}
+
+model EmployeeRole {
+  organizationId String       @db.Uuid
+  employeeId     String       @db.Uuid
+  roleId         String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  employee       Employee     @relation(fields: [organizationId, employeeId], references: [organizationId, id])
+  role           Role         @relation(fields: [organizationId, roleId], references: [organizationId, id])
+
+  @@id([organizationId, employeeId, roleId])
+}
+
+model RolePermission {
+  organizationId String       @db.Uuid
+  roleId         String       @db.Uuid
+  permissionId   String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  role           Role         @relation(fields: [organizationId, roleId], references: [organizationId, id])
+  permission     Permission   @relation(fields: [organizationId, permissionId], references: [organizationId, id])
+
+  @@id([organizationId, roleId, permissionId])
+}
+
+model EmployeeStore {
+  organizationId String       @db.Uuid
+  employeeId     String       @db.Uuid
+  storeId        String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  employee       Employee     @relation(fields: [organizationId, employeeId], references: [organizationId, id])
+  store          Store        @relation(fields: [organizationId, storeId], references: [organizationId, id])
+
+  @@id([organizationId, employeeId, storeId])
+}
+
+model Register {
+  id               String               @id @default(uuid()) @db.Uuid
+  organizationId   String               @db.Uuid
+  storeId          String               @db.Uuid
+  name             String
+  code             String
+  status           RegisterStatus       @default(ACTIVE)
+  deviceIdentifier String?
+  organization     Organization         @relation(fields: [organizationId], references: [id])
+  store            Store                @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  sessions         RegisterSession[]
+  assignments      TerminalAssignment[]
+  orders           Order[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, storeId, id])
+  @@unique([organizationId, storeId, code])
+}
+
+model Category {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  name           String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  products       Product[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, name])
+}
+
+model Product {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  categoryId     String           @db.Uuid
+  name           String
+  description    String?
+  brand          String?
+  active         Boolean          @default(true)
+  ageRestricted  Boolean          @default(false)
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  category       Category         @relation(fields: [organizationId, categoryId], references: [organizationId, id])
+  variants       ProductVariant[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, categoryId, id])
+  @@index([organizationId, name])
+  @@index([organizationId, brand])
+}
+
+model ProductVariant {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  organizationId     String                     @db.Uuid
+  productId          String                     @db.Uuid
+  name               String
+  sku                String
+  size               Decimal?                   @db.Decimal(12, 3)
+  unit               ProductUnit                @default(EACH)
+  active             Boolean                    @default(true)
+  organization       Organization               @relation(fields: [organizationId], references: [id])
+  product            Product                    @relation(fields: [organizationId, productId], references: [organizationId, id])
+  barcodes           Barcode[]
+  prices             Price[]
+  inventoryLevels    InventoryLevel[]
+  inventoryMovements InventoryMovement[]
+  orderItems         OrderItem[]
+  reservations       InventoryReservationLine[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, sku])
+  @@unique([organizationId, productId, id])
+  @@index([organizationId, productId, active])
+}
+
+model Barcode {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
+  variantId      String         @db.Uuid
+  barcodeValue   String
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  variant        ProductVariant @relation(fields: [organizationId, variantId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, barcodeValue])
+  @@unique([organizationId, variantId, id])
+  @@index([organizationId, barcodeValue])
+}
+
+model Price {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
+  storeId        String?        @db.Uuid
+  variantId      String         @db.Uuid
+  amountMinor    BigInt
+  currency       String         @default("USD") @db.Char(3)
+  effectiveFrom  DateTime
+  effectiveTo    DateTime?
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  store          Store?         @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  variant        ProductVariant @relation(fields: [organizationId, variantId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@index([organizationId, storeId, variantId, effectiveFrom])
+}
+
+model InventoryLevel {
+  id               String                     @id @default(uuid()) @db.Uuid
+  organizationId   String                     @db.Uuid
+  storeId          String                     @db.Uuid
+  variantId        String                     @db.Uuid
+  onHand           Int                        @default(0)
+  reserved         Int                        @default(0)
+  organization     Organization               @relation(fields: [organizationId], references: [id])
+  store            Store                      @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  variant          ProductVariant             @relation(fields: [organizationId, variantId], references: [organizationId, id])
+  reservationLines InventoryReservationLine[]
+
+  @@unique([organizationId, storeId, variantId])
+  @@index([organizationId, storeId, onHand])
+}
+
+model InventoryMovement {
+  id             String                @id @default(uuid()) @db.Uuid
+  organizationId String                @db.Uuid
+  storeId        String                @db.Uuid
+  variantId      String                @db.Uuid
+  quantityDelta  Int
+  type           InventoryMovementType
+  referenceType  String?
+  referenceId    String?
+  employeeId     String?               @db.Uuid
+  createdAt      DateTime              @default(now())
+  organization   Organization          @relation(fields: [organizationId], references: [id])
+  store          Store                 @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  variant        ProductVariant        @relation(fields: [organizationId, variantId], references: [organizationId, id])
+  employee       Employee?             @relation(fields: [organizationId, employeeId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@index([organizationId, storeId, variantId, createdAt])
+  @@index([organizationId, referenceType, referenceId])
+}
+
+model InventoryReservation {
+  id             String                     @id @default(uuid()) @db.Uuid
+  organizationId String                     @db.Uuid
+  storeId        String                     @db.Uuid
+  orderId        String                     @db.Uuid
+  status         ReservationStatus          @default(ACTIVE)
+  createdAt      DateTime                   @default(now())
+  convertedAt    DateTime?
+  releasedAt     DateTime?
+  organization   Organization               @relation(fields: [organizationId], references: [id])
+  store          Store                      @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  order          Order                      @relation(fields: [organizationId, orderId], references: [organizationId, id])
+  lines          InventoryReservationLine[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, status, createdAt])
+}
+
+model InventoryReservationLine {
+  id             String               @id @default(uuid()) @db.Uuid
+  organizationId String               @db.Uuid
+  reservationId  String               @db.Uuid
+  storeId        String               @db.Uuid
+  variantId      String               @db.Uuid
+  quantity       Int
+  organization   Organization         @relation(fields: [organizationId], references: [id])
+  reservation    InventoryReservation @relation(fields: [organizationId, reservationId], references: [organizationId, id])
+  level          InventoryLevel       @relation(fields: [organizationId, storeId, variantId], references: [organizationId, storeId, variantId])
+  variant        ProductVariant       @relation(fields: [organizationId, variantId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, reservationId, variantId])
+}
+
+model RegisterSession {
+  id                String                @id @default(uuid()) @db.Uuid
+  organizationId    String                @db.Uuid
+  storeId           String                @db.Uuid
+  registerId        String                @db.Uuid
+  employeeId        String                @db.Uuid
+  status            RegisterSessionStatus @default(OPEN)
+  openingCashMinor  BigInt
+  expectedCashMinor BigInt?
+  actualCashMinor   BigInt?
+  differenceMinor   BigInt?
+  openedAt          DateTime              @default(now())
+  closedAt          DateTime?
+  organization      Organization          @relation(fields: [organizationId], references: [id])
+  store             Store                 @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  register          Register              @relation(fields: [organizationId, registerId], references: [organizationId, id])
+  employee          Employee              @relation(fields: [organizationId, employeeId], references: [organizationId, id])
+  orders            Order[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, registerId, id])
+  @@index([organizationId, registerId, status])
+}
+
+model Customer {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  storeId        String?      @db.Uuid
+  name           String
+  email          String?
+  phone          String?
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  store          Store?       @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  orders         Order[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, name])
+}
+
+model MerchantPaymentAccount {
+  id                 String               @id @default(uuid()) @db.Uuid
+  organizationId     String               @db.Uuid
+  storeId            String?              @db.Uuid
+  provider           String
+  providerMerchantId String
+  environment        PaymentEnvironment
+  status             PaymentAccountStatus @default(ACTIVE)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  organization       Organization         @relation(fields: [organizationId], references: [id])
+  store              Store?               @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  attempts           PaymentAttempt[]
+  refundAttempts     RefundAttempt[]
+  terminals          TerminalDevice[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, provider, environment, providerMerchantId])
+  @@unique([organizationId, storeId, id])
+}
+
+model TerminalDevice {
+  id                       String                 @id @default(uuid()) @db.Uuid
+  organizationId           String                 @db.Uuid
+  storeId                  String                 @db.Uuid
+  merchantPaymentAccountId String                 @db.Uuid
+  terminalIdentifier       String
+  serialNumber             String?
+  model                    String
+  status                   TerminalStatus         @default(UNPAIRED)
+  lastSeenAt               DateTime?
+  organization             Organization           @relation(fields: [organizationId], references: [id])
+  store                    Store                  @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  account                  MerchantPaymentAccount @relation(fields: [organizationId, merchantPaymentAccountId], references: [organizationId, id])
+  assignments              TerminalAssignment[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, merchantPaymentAccountId, terminalIdentifier])
+}
+
+model TerminalAssignment {
+  id               String         @id @default(uuid()) @db.Uuid
+  organizationId   String         @db.Uuid
+  storeId          String         @db.Uuid
+  terminalDeviceId String         @db.Uuid
+  registerId       String         @db.Uuid
+  assignedAt       DateTime       @default(now())
+  unassignedAt     DateTime?
+  organization     Organization   @relation(fields: [organizationId], references: [id])
+  store            Store          @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  terminal         TerminalDevice @relation(fields: [organizationId, terminalDeviceId], references: [organizationId, id])
+  register         Register       @relation(fields: [organizationId, registerId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@index([organizationId, terminalDeviceId, unassignedAt])
+  @@index([organizationId, registerId, unassignedAt])
+}
+
+model Order {
+  id                String                 @id @default(uuid()) @db.Uuid
+  organizationId    String                 @db.Uuid
+  storeId           String                 @db.Uuid
+  registerId        String                 @db.Uuid
+  registerSessionId String                 @db.Uuid
+  customerId        String?                @db.Uuid
+  orderNumber       String
+  status            OrderStatus            @default(DRAFT)
+  subtotalMinor     BigInt
+  discountMinor     BigInt
+  taxMinor          BigInt
+  totalMinor        BigInt
+  currency          String                 @default("USD") @db.Char(3)
+  createdAt         DateTime               @default(now())
+  organization      Organization           @relation(fields: [organizationId], references: [id])
+  store             Store                  @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  register          Register               @relation(fields: [organizationId, registerId], references: [organizationId, id])
+  session           RegisterSession        @relation(fields: [organizationId, registerSessionId], references: [organizationId, id])
+  customer          Customer?              @relation(fields: [organizationId, customerId], references: [organizationId, id])
+  items             OrderItem[]
+  payments          Payment[]
+  refunds           Refund[]
+  reservations      InventoryReservation[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, storeId, orderNumber])
+  @@index([organizationId, storeId, createdAt])
+  @@index([organizationId, status])
+}
+
+model OrderItem {
+  id                  String         @id @default(uuid()) @db.Uuid
+  organizationId      String         @db.Uuid
+  orderId             String         @db.Uuid
+  variantId           String         @db.Uuid
+  productNameSnapshot String
+  variantNameSnapshot String
+  skuSnapshot         String
+  barcodeSnapshot     String?
+  unitPriceMinor      BigInt
+  quantity            Int
+  subtotalMinor       BigInt
+  discountMinor       BigInt
+  taxMinor            BigInt
+  totalMinor          BigInt
+  currency            String         @default("USD") @db.Char(3)
+  order               Order          @relation(fields: [organizationId, orderId], references: [organizationId, id])
+  variant             ProductVariant @relation(fields: [organizationId, variantId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, orderId, id])
+}
+
+model Payment {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  orderId        String           @db.Uuid
+  kind           PaymentKind
+  status         PaymentStatus    @default(CREATED)
+  amountMinor    BigInt
+  capturedMinor  BigInt           @default(0)
+  currency       String           @default("USD") @db.Char(3)
+  order          Order            @relation(fields: [organizationId, orderId], references: [organizationId, id])
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  attempts       PaymentAttempt[]
+  refunds        Refund[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, orderId, id])
+  @@index([organizationId, status])
+}
+
+model PaymentAttempt {
+  id                       String                  @id @default(uuid()) @db.Uuid
+  organizationId           String                  @db.Uuid
+  paymentId                String                  @db.Uuid
+  merchantPaymentAccountId String?                 @db.Uuid
+  status                   PaymentAttemptStatus    @default(CREATED)
+  idempotencyKey           String
+  providerTransactionId    String?
+  requestedMinor           BigInt
+  providerResultJson       Json?
+  failureCode              String?
+  nextReconciliationAt     DateTime?
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
+  payment                  Payment                 @relation(fields: [organizationId, paymentId], references: [organizationId, id])
+  account                  MerchantPaymentAccount? @relation(fields: [organizationId, merchantPaymentAccountId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, paymentId, idempotencyKey])
+  @@index([organizationId, status, nextReconciliationAt])
+}
+
+model Refund {
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @db.Uuid
+  orderId        String          @db.Uuid
+  paymentId      String          @db.Uuid
+  status         RefundStatus    @default(PENDING)
+  amountMinor    BigInt
+  currency       String          @default("USD") @db.Char(3)
+  createdAt      DateTime        @default(now())
+  order          Order           @relation(fields: [organizationId, orderId], references: [organizationId, id])
+  payment        Payment         @relation(fields: [organizationId, paymentId], references: [organizationId, id])
+  attempts       RefundAttempt[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, orderId, createdAt])
+}
+
+model RefundAttempt {
+  id                       String                  @id @default(uuid()) @db.Uuid
+  organizationId           String                  @db.Uuid
+  refundId                 String                  @db.Uuid
+  merchantPaymentAccountId String?                 @db.Uuid
+  status                   RefundAttemptStatus     @default(CREATED)
+  idempotencyKey           String
+  providerRefundId         String?
+  requestedMinor           BigInt
+  providerResultJson       Json?
+  nextReconciliationAt     DateTime?
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
+  refund                   Refund                  @relation(fields: [organizationId, refundId], references: [organizationId, id])
+  account                  MerchantPaymentAccount? @relation(fields: [organizationId, merchantPaymentAccountId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, refundId, idempotencyKey])
+  @@index([organizationId, status, nextReconciliationAt])
+}
+
+model IdempotencyKey {
+  id                 String            @id @default(uuid()) @db.Uuid
+  organizationId     String            @db.Uuid
+  operationScope     String
+  key                String
+  requestFingerprint String
+  status             IdempotencyStatus @default(PROCESSING)
+  responseStatus     Int?
+  responseBody       Json?
+  resultReference    String?
+  expiresAt          DateTime
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  organization       Organization      @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, operationScope, key])
+  @@index([expiresAt])
+}
+
+model AuditRecord {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  storeId        String?
+  userId         String?
+  registerId     String?
+  action         String
+  entityType     String
+  entityId       String
+  beforeJson     Json?
+  afterJson      Json?
+  metadataJson   Json?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, entityType, entityId, createdAt])
+}
+
+model OutboxEvent {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  aggregateType  String
+  aggregateId    String
+  eventType      String
+  payload        Json
+  status         OutboxStatus @default(PENDING)
+  attempts       Int          @default(0)
+  availableAt    DateTime     @default(now())
+  claimedAt      DateTime?
+  claimedBy      String?
+  processedAt    DateTime?
+  lastError      String?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([status, availableAt, createdAt])
+  @@index([claimedAt])
+  @@index([organizationId, aggregateType, aggregateId])
+}
