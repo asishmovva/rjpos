@@ -18,17 +18,30 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U rjpos -d rjpos"
           --health-interval 5s --health-timeout 5s --health-retries 10
+      postgres-test:
+        image: postgres:18
+        env:
+          POSTGRES_USER: rjpos_test
+          POSTGRES_PASSWORD: rjpos_test
+          POSTGRES_DB: rjpos_test
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U rjpos_test -d rjpos_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
       redis:
         image: redis:8
         ports: ['6379:6379']
+      redis-test:
+        image: redis:8
+        ports: ['6380:6379']
     env:
       DATABASE_URL: postgresql://rjpos:rjpos@127.0.0.1:5432/rjpos
       REDIS_URL: redis://127.0.0.1:6379
-      TEST_DATABASE_URL: postgresql://rjpos:rjpos@127.0.0.1:5432/rjpos
-      TEST_REDIS_URL: redis://127.0.0.1:6379
+      TEST_DATABASE_URL: postgresql://rjpos_test:rjpos_test@127.0.0.1:5433/rjpos_test
+      TEST_REDIS_URL: redis://127.0.0.1:6380
       TEST_ORGANIZATION_ID: 00000000-0000-0000-0000-000000000001
       TEST_STORE_ID: 00000000-0000-0000-0000-000000000002
-      TEST_VARIANT_ID: 00000000-0000-0000-0000-000000000005
+      TEST_VARIANT_ID: 00000000-0000-0000-0000-000000000009
       TEST_ORDER_ID_ONE: 00000000-0000-0000-0000-000000000010
       TEST_ORDER_ID_TWO: 00000000-0000-0000-0000-000000000011
     steps:
@@ -38,7 +51,9 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      - run: cp .env.test.example .env.test
       - run: pnpm --filter @rjpos/database db:deploy
+      - run: pnpm --filter @rjpos/database prisma:generate
       - run: pnpm --filter @rjpos/database db:seed
       - run: pnpm typecheck
       - run: pnpm lint
