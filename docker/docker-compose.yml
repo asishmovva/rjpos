@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: rjpos
+      POSTGRES_PASSWORD: rjpos
+      POSTGRES_DB: rjpos
+    ports:
+      - '15432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql
+  redis:
+    image: redis:8
+    ports:
+      - '6379:6379'
+volumes:
+  postgres-data:

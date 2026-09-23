@@ -1,0 +1,23 @@
+{
+  "name": "@rjpos/web",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+     "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "node -e \"console.log('web tests pending')\""
+  },
+  "dependencies": {
+    "next": "^16.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "@rjpos/api-client": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "typescript": "^5.9.3"
+  }
+}

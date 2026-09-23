@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: rjpos
+          POSTGRES_PASSWORD: rjpos
+          POSTGRES_DB: rjpos
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U rjpos -d rjpos"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:8
+        ports: ['6379:6379']
+    env:
+      DATABASE_URL: postgresql://rjpos:rjpos@127.0.0.1:5432/rjpos
+      REDIS_URL: redis://127.0.0.1:6379
+      TEST_DATABASE_URL: postgresql://rjpos:rjpos@127.0.0.1:5432/rjpos
+      TEST_REDIS_URL: redis://127.0.0.1:6379
+      TEST_ORGANIZATION_ID: 00000000-0000-0000-0000-000000000001
+      TEST_STORE_ID: 00000000-0000-0000-0000-000000000002
+      TEST_VARIANT_ID: 00000000-0000-0000-0000-000000000005
+      TEST_ORDER_ID_ONE: 00000000-0000-0000-0000-000000000010
+      TEST_ORDER_ID_TWO: 00000000-0000-0000-0000-000000000011
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.15.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @rjpos/database db:deploy
+      - run: pnpm --filter @rjpos/database db:seed
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test --force
+      - run: pnpm build
