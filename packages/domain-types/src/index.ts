@@ -25,3 +25,12 @@ export const paymentAttemptStatuses = [
   'FAILED',
 ] as const;
 export type PaymentAttemptStatus = (typeof paymentAttemptStatuses)[number];
+
+export {
+  addScannedVariant,
+  calculateCartTotals,
+  calculateChangeDue,
+  type CartDiscount,
+  type CartLineInput,
+  type CartTotals,
+} from './cart.js';

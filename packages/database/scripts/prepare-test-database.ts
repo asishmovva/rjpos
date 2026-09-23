@@ -51,8 +51,8 @@ async function seedTestFixtures(): Promise<void> {
   });
   await prisma.store.upsert({
     where: { id: storeId },
-    update: {},
-    create: { id: storeId, organizationId, name: 'Test Store' },
+    update: { taxRateBasisPoints: 625 },
+    create: { id: storeId, organizationId, name: 'Test Store', taxRateBasisPoints: 625 },
   });
   await prisma.employee.upsert({
     where: { id: employeeId },
@@ -74,6 +74,10 @@ async function seedTestFixtures(): Promise<void> {
       name: 'Test Register',
       code: 'TEST-REGISTER',
     },
+  });
+  await prisma.employeeStore.upsert({
+    where: { organizationId_employeeId_storeId: { organizationId, employeeId, storeId } },
+    update: {}, create: { organizationId, employeeId, storeId },
   });
   await prisma.category.upsert({
     where: { id: categoryId },
@@ -101,6 +105,16 @@ async function seedTestFixtures(): Promise<void> {
       sku: 'TEST-SKU',
     },
   });
+  await prisma.barcode.upsert({
+    where: { organizationId_barcodeValue: { organizationId, barcodeValue: '012345678905' } },
+    update: { variantId: testEnvironment.TEST_VARIANT_ID },
+    create: { organizationId, variantId: testEnvironment.TEST_VARIANT_ID, barcodeValue: '012345678905' },
+  });
+  const currentPrice = await prisma.price.findFirst({ where: { organizationId, storeId,
+    variantId: testEnvironment.TEST_VARIANT_ID, effectiveTo: null } });
+  if (currentPrice) await prisma.price.update({ where: { id: currentPrice.id }, data: { amountMinor: 1000n } });
+  else await prisma.price.create({ data: { organizationId, storeId, variantId: testEnvironment.TEST_VARIANT_ID,
+    amountMinor: 1000n, effectiveFrom: new Date('2026-01-01T00:00:00Z') } });
   await prisma.inventoryLevel.upsert({
     where: {
       organizationId_storeId_variantId: {

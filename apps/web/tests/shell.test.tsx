@@ -4,10 +4,11 @@ import RootLayout, { metadata } from '../app/layout.js';
 import Dashboard from '../app/page.js';
 
 describe('RJ POS web foundation', () => {
-  it('renders expected application identity and foundation copy', () => {
+  it('renders the register workflow and authoritative checkout copy', () => {
     const markup = renderToStaticMarkup(<Dashboard />);
-    expect(markup).toContain('<h1>RJ POS</h1>');
-    expect(markup).toContain('Merchant operations foundation');
+    expect(markup).toContain('Downtown Register');
+    expect(markup).toContain('Scan UPC');
+    expect(markup).toContain('Final pricing and inventory are verified by the server.');
   });
 
   it('renders through the root document shell with English metadata', () => {
@@ -20,7 +21,7 @@ describe('RJ POS web foundation', () => {
     expect(markup).toContain('<body>');
     expect(metadata).toMatchObject({
       title: 'RJ POS',
-      description: 'Retail operations portal',
+      description: 'Retail register and merchant operations',
     });
   });
 

@@ -1,10 +1,10 @@
 # Current State
 
-Updated: 2026-09-22
+Updated: 2026-09-23
 
 ## Phase
 
-Phase 0 is complete. Database/runtime validation and behavioral coverage closure passed with no required checks failed, blocked, or skipped. The only zero-test packages are declaration-only and explicitly classified as compile-only. Phase 1 has not started.
+Phase 0 remains complete. Phase 1 Core POS is implemented and under final QA: catalog lookup, ledger-backed inventory, register sessions, deterministic cart/tax/discount calculations, idempotent cash and simulated-terminal checkout, receipts, sales history, compensating voids/refunds, API RBAC, and the Next.js/Electron register workflow are present.
 
 ## Delivered
 
@@ -18,6 +18,9 @@ Phase 0 is complete. Database/runtime validation and behavioral coverage closure
 - Concurrency-safe inventory reservations and race-condition test.
 - Electron development loading of the independently running Next.js application, packaged/static renderer separation, bounded unavailable-server handling, context isolation, disabled node integration, sandbox, and narrow hardware IPC. A real Electron smoke launch verified the web heading and IPC response.
 - Shared RJ POS UI tokens and GitHub Actions CI.
+- Phase 1 product/variant catalog with store prices, SKU/UPC lookup, active, age-restricted, tax-category, cost, and inventory-tracking attributes.
+- PostgreSQL-backed register open/close lifecycle, server-authoritative checkout, cash tender/change, simulated terminal uncertainty, receipts/history, full/partial refunds, and void compensation.
+- Responsive Next.js register workflow with keyboard-scanner entry, repeated-scan quantity behavior, cart controls, age acknowledgment, cash/terminal checkout, printable receipt, inventory view, and order history.
 
 ## Local Endpoint
 
@@ -25,4 +28,4 @@ RJ POS Docker Compose maps PostgreSQL to `127.0.0.1:15432` and Redis to `127.0.0
 
 ## Verification
 
-QA status, package-by-package behavioral-test counts, known coverage gaps, and Electron runtime evidence are recorded in `docs/phase-0/final-qa.md`. Phase 0 has 49 behavioral tests. Real payment-provider integration is intentionally not implemented, and Phase 1 has not started.
+Phase 0 evidence remains in `docs/phase-0/final-qa.md`. Phase 1 implementation and current QA evidence are recorded separately under `docs/phase-1/`. Real payment-provider and certified-hardware integration remain intentionally out of scope.

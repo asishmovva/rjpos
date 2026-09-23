@@ -38,9 +38,15 @@ importers:
       '@rjpos/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@rjpos/domain-types':
+        specifier: workspace:*
+        version: link:../../packages/domain-types
       '@rjpos/logging':
         specifier: workspace:*
         version: link:../../packages/logging
+      '@rjpos/payment-contracts':
+        specifier: workspace:*
+        version: link:../../packages/payment-contracts
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -185,6 +191,12 @@ importers:
       '@rjpos/config':
         specifier: workspace:*
         version: link:../config
+      '@rjpos/domain-types':
+        specifier: workspace:*
+        version: link:../domain-types
+      '@rjpos/payment-contracts':
+        specifier: workspace:*
+        version: link:../payment-contracts
     devDependencies:
       '@types/node':
         specifier: ^24.5.2
