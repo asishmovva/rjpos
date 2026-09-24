@@ -4,7 +4,7 @@ Updated: 2026-09-24
 
 ## Phase
 
-Phase 0 and Phase 1 remain complete. Phase 2 Back-Office Management is implemented and verified: the administrative shell, catalog/category/variant lifecycle, effective-dated pricing, ledger-backed inventory administration and low-stock signals, employees/RBAC, stores/registers, order/refund/audit views, settings, and an authoritative operational dashboard are present.
+Phases 0â€“2 remain complete. Phase 3 Employees, Customers, Loyalty & Gift Cards is implemented: database-backed workforce timekeeping, customer profiles and purchase history, configurable ledger-backed loyalty, secure internal gift cards, and gift-card split tender now extend the existing register and back-office system.
 
 ## Delivered
 
@@ -23,6 +23,11 @@ Phase 0 and Phase 1 remain complete. Phase 2 Back-Office Management is implement
 - Responsive Next.js register workflow with keyboard-scanner entry, repeated-scan quantity behavior, cart controls, age acknowledgment, cash/terminal checkout, printable receipt, inventory view, and order history.
 - Tenant-scoped `/admin` application and `/api/v1/admin` boundary for products, variants, categories, prices, inventory history/adjustments, employees, stores, registers, orders, refunds, audit, settings, and dashboard.
 - PostgreSQL-enforced concurrent UPC and effective-price conflict handling, active-session lifecycle safeguards, and a real API/controller-to-database catalog-to-sale-to-admin E2E flow.
+- One-active-shift enforcement, clock in/out, current status, shift history, worked duration, manager corrections, and retained history for inactive employees.
+- Tenant-scoped customer create/edit/search/lifecycle, optional register attachment, and order-derived purchase history.
+- Configurable loyalty earn/redemption/manual adjustment with immutable transaction history and refund/void compensation.
+- Secure hashed internal gift cards with issue/reload/lookup/disable, immutable balance history, concurrent final-balance protection, and gift-card plus cash/simulated-terminal split tender.
+- Real PostgreSQL race coverage and a controller-to-database Phase 3 employee/customer/value/refund E2E flow.
 
 ## Local Endpoint
 
@@ -30,4 +35,4 @@ RJ POS Docker Compose maps PostgreSQL to `127.0.0.1:15432` and Redis to `127.0.0
 
 ## Verification
 
-Phase 0 evidence remains in `docs/phase-0/final-qa.md`. Phase 1 evidence remains under `docs/phase-1/`; Phase 2 implementation and QA evidence are under `docs/phase-2/`. Real payment-provider, certified-hardware, purchasing/vendor, loyalty, and advanced analytics work remain intentionally out of scope.
+Phase 0 evidence remains in `docs/phase-0/final-qa.md`. Phase 1 evidence remains under `docs/phase-1/`; Phase 2 evidence is under `docs/phase-2/`; Phase 3 implementation and QA evidence is under `docs/phase-3/`. Real payment-provider, certified-hardware, purchasing/vendor, payroll/scheduling, advanced loyalty/marketing, and advanced analytics work remain intentionally out of scope.
