@@ -114,6 +114,58 @@ async function restoreInventory(tx: Tx, input: {
   }
 }
 
+async function compensateCustomerValue(tx: Tx, input: {
+  organizationId: string;
+  orderId: string;
+  employeeId: string;
+  referencePrefix: string;
+  refundId?: string;
+  numerator?: bigint;
+  denominator?: bigint;
+  settleFully?: boolean;
+}) {
+  const ratio = (absolute: bigint): bigint => {
+    if (input.numerator === undefined || input.denominator === undefined) return absolute;
+    return input.denominator === 0n ? 0n : (absolute * input.numerator) / input.denominator;
+  };
+  const loyaltyEntries = await tx.loyaltyTransaction.findMany({ where: { organizationId: input.organizationId,
+    orderId: input.orderId, status: 'POSTED', type: { in: ['EARN', 'REDEEM'] } } });
+  for (const entry of loyaltyEntries) {
+    let signedPoints = entry.points > 0
+      ? -Number(ratio(BigInt(entry.points)))
+      : Number(ratio(BigInt(-entry.points)));
+    if (input.settleFully) {
+      const prior = await tx.loyaltyTransaction.aggregate({ where: {
+        organizationId: input.organizationId, orderId: input.orderId, type: 'REVERSAL', status: 'POSTED',
+        referenceKey: { endsWith: `:loyalty:${entry.id}` },
+      }, _sum: { points: true } });
+      signedPoints = -entry.points - (prior._sum.points ?? 0);
+    }
+    if (signedPoints === 0) continue;
+    await tx.loyaltyTransaction.create({ data: { organizationId: input.organizationId, customerId: entry.customerId,
+      orderId: input.orderId, ...(input.refundId ? { refundId: input.refundId } : {}), employeeId: input.employeeId,
+      type: 'REVERSAL', points: signedPoints,
+      reason: input.refundId ? 'Refund compensation' : 'Void compensation', referenceKey: `${input.referencePrefix}:loyalty:${entry.id}` } });
+  }
+  const giftEntries = await tx.giftCardTransaction.findMany({ where: { organizationId: input.organizationId,
+    orderId: input.orderId, status: 'POSTED', type: 'REDEEM' } });
+  for (const entry of giftEntries) {
+    let amountMinor = ratio(entry.amountMinor < 0n ? -entry.amountMinor : entry.amountMinor);
+    if (input.settleFully) {
+      const prior = await tx.giftCardTransaction.aggregate({ where: {
+        organizationId: input.organizationId, orderId: input.orderId, status: 'POSTED',
+        type: { in: ['REFUND', 'REVERSAL'] }, referenceKey: { endsWith: `:gift:${entry.id}` },
+      }, _sum: { amountMinor: true } });
+      amountMinor = -entry.amountMinor - (prior._sum.amountMinor ?? 0n);
+    }
+    if (amountMinor === 0n) continue;
+    await tx.giftCardTransaction.create({ data: { organizationId: input.organizationId, giftCardId: entry.giftCardId,
+      orderId: input.orderId, ...(input.refundId ? { refundId: input.refundId } : {}), employeeId: input.employeeId,
+      type: input.refundId ? 'REFUND' : 'REVERSAL', amountMinor,
+      reason: input.refundId ? 'Refund compensation' : 'Void compensation', referenceKey: `${input.referencePrefix}:gift:${entry.id}` } });
+  }
+}
+
 export async function voidOrder(prisma: PrismaClient, input: {
   organizationId: string;
   orderId: string;
@@ -148,6 +200,8 @@ export async function voidOrder(prisma: PrismaClient, input: {
       lines: order.items.map((item) => ({ variantId: item.variantId, quantity: item.quantity })) });
     await tx.payment.updateMany({ where: { organizationId: input.organizationId, orderId: order.id,
       status: { in: ['CAPTURED', 'AUTHORIZED'] } }, data: { status: 'CANCELLED', capturedMinor: 0n } });
+    await compensateCustomerValue(tx, { organizationId: input.organizationId, orderId: order.id,
+      employeeId: input.employeeId, referencePrefix: `void:${order.id}` });
     await tx.order.update({ where: { id: order.id }, data: { status: 'VOIDED', voidedAt: new Date() } });
     await Promise.all([
       tx.auditRecord.create({ data: { organizationId: input.organizationId, storeId: order.storeId,
@@ -194,7 +248,10 @@ export async function refundOrder(
       include: { items: { include: { refundItems: { where: { refund: { status: 'SUCCEEDED' } } } } }, payments: { include: { attempts: true } } } });
     if (!order) throw new PosError('ORDER_NOT_FOUND', 404);
     if (!['COMPLETED', 'PARTIALLY_REFUNDED'].includes(order.status)) throw new PosError('ORDER_NOT_REFUNDABLE', 409);
-    const payment = order.payments.find((candidate) => ['CAPTURED', 'PARTIALLY_REFUNDED'].includes(candidate.status));
+    const refundablePayments = order.payments.filter((candidate) => ['CAPTURED', 'PARTIALLY_REFUNDED'].includes(candidate.status));
+    const payment = refundablePayments.find((candidate) => candidate.kind === 'TERMINAL')
+      ?? refundablePayments.find((candidate) => candidate.kind === 'CASH')
+      ?? refundablePayments[0];
     if (!payment) throw new PosError('PAYMENT_NOT_REFUNDABLE', 409);
     const requested = input.items.map((request) => {
       const item = order.items.find((candidate) => candidate.id === request.orderItemId);
@@ -218,24 +275,35 @@ export async function refundOrder(
       quantity: item.quantity, amountMinor: item.amountMinor, returnToStock: item.returnToStock })) });
     let attemptId: string | undefined;
     const terminalAttempt = payment.attempts.find((attempt) => attempt.status === 'SUCCEEDED');
-    if (payment.kind === 'TERMINAL') {
+    const terminalCaptured = order.payments.filter((candidate) => candidate.kind === 'TERMINAL')
+      .reduce((sum, candidate) => sum + candidate.capturedMinor, 0n);
+    const previouslyRefundedMinor = order.items.reduce((sum, item) => sum
+      + item.refundItems.reduce((itemSum, refundItem) => itemSum + refundItem.amountMinor, 0n), 0n);
+    const finalRefund = previouslyRefundedMinor + amountMinor >= order.totalMinor;
+    const priorProviderRefunds = await tx.refundAttempt.aggregate({ where: {
+      organizationId: input.organizationId, status: 'SUCCEEDED', refund: { orderId: order.id },
+    }, _sum: { requestedMinor: true } });
+    const providerAmountMinor = order.totalMinor === 0n ? 0n : finalRefund
+      ? terminalCaptured - (priorProviderRefunds._sum.requestedMinor ?? 0n)
+      : (amountMinor * terminalCaptured) / order.totalMinor;
+    if (payment.kind === 'TERMINAL' && providerAmountMinor > 0n) {
       if (!terminalAttempt?.providerTransactionId) throw new PosError('PROVIDER_TRANSACTION_MISSING', 409);
       const attempt = await tx.refundAttempt.create({ data: { organizationId: input.organizationId, refundId: refund.id,
-        status: 'PROCESSING', idempotencyKey: input.idempotencyKey, requestedMinor: amountMinor } });
+        status: 'PROCESSING', idempotencyKey: input.idempotencyKey, requestedMinor: providerAmountMinor } });
       attemptId = attempt.id;
     }
     await tx.idempotencyKey.update({ where: { organizationId_operationScope_key: { organizationId: input.organizationId,
       operationScope: scope, key: input.idempotencyKey } }, data: { resultReference: refund.id } });
-    return { order, payment, refund, requested, amountMinor, attemptId,
+    return { order, payment, refund, requested, amountMinor, providerAmountMinor, attemptId,
       providerTransactionId: terminalAttempt?.providerTransactionId };
   });
   if ('existing' in prepared) return prepared.existing;
 
-  let success = prepared.payment.kind === 'CASH';
+  let success = prepared.attemptId === undefined;
   let providerStatus = 'SUCCEEDED';
-  if (prepared.payment.kind === 'TERMINAL') {
+  if (prepared.attemptId) {
     try {
-      const result = await provider.refund(prepared.providerTransactionId!, prepared.amountMinor.toString(), input.idempotencyKey);
+      const result = await provider.refund(prepared.providerTransactionId!, prepared.providerAmountMinor.toString(), input.idempotencyKey);
       providerStatus = result.status;
       success = result.status === 'SUCCEEDED';
     } catch {
@@ -267,10 +335,14 @@ export async function refundOrder(
     const successfulTotal = await tx.refund.aggregate({ where: { organizationId: input.organizationId,
       orderId: input.orderId, status: 'SUCCEEDED' }, _sum: { amountMinor: true } });
     const totalRefunded = (successfulTotal._sum.amountMinor ?? 0n) + current.amountMinor;
-    const fullyRefunded = totalRefunded >= prepared.payment.capturedMinor;
+    const fullyRefunded = totalRefunded >= prepared.order.totalMinor;
     await tx.refund.update({ where: { id: current.id }, data: { status: 'SUCCEEDED', completedAt: new Date() } });
-    await tx.payment.update({ where: { id: prepared.payment.id }, data: { status: fullyRefunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED' } });
+    await tx.payment.updateMany({ where: { organizationId: input.organizationId, orderId: input.orderId,
+      status: { in: ['CAPTURED', 'PARTIALLY_REFUNDED'] } }, data: { status: fullyRefunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED' } });
     await tx.order.update({ where: { id: input.orderId }, data: { status: fullyRefunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED' } });
+    await compensateCustomerValue(tx, { organizationId: input.organizationId, orderId: input.orderId,
+      employeeId: input.employeeId, refundId: current.id, referencePrefix: `refund:${current.id}`,
+      numerator: current.amountMinor, denominator: prepared.order.totalMinor, settleFully: fullyRefunded });
     await Promise.all([
       tx.auditRecord.create({ data: { organizationId: input.organizationId, storeId: prepared.order.storeId,
         registerId: prepared.order.registerId, userId: input.employeeId, action: 'ORDER_REFUNDED', entityType: 'Refund', entityId: current.id,
