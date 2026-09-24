@@ -36,6 +36,14 @@ Core endpoints live below `/api/v1`: catalog lookup, inventory, current store co
 
 No external account, payment credential, hardware SDK, or machine-level tool is needed for Phase 1. PostgreSQL remains authoritative; the project does not introduce a second local/offline source of truth. Real processors, certified terminals, scanners, printers, and drawers remain future integrations behind their existing boundaries.
 
+## Phase 2 Back Office
+
+After deploying migration `0004_phase2_back_office`, open `http://localhost:3000/admin`. Owner and Manager users can administer the catalog, variants, effective-dated store prices, ledger-backed inventory, employees, registers, orders/refunds, and audit history. Owner-only operations cover store lifecycle and settings. Cashiers do not receive admin API permissions.
+
+The New product workflow can create a category, product, variant/SKU/UPC, current store price, low-stock threshold, and opening inventory in one guided operation. Each step calls an explicit `/api/v1/admin` operation; the browser never talks to Prisma or PostgreSQL. Return to `/` (or the secure Electron host), scan the new UPC, sell it, and use the admin Orders and Inventory areas to verify the authoritative result.
+
+Manual inventory changes require a signed integer delta and reason and always create ledger/audit records. Price changes append effective-dated rows and retain history. Products, variants, categories, employees, stores, and registers use active/inactive lifecycle states; active register sessions prevent unsafe register/store changes.
+
 ## Integration-test setup
 
 Integration tests use dedicated PostgreSQL and Redis services; they must never target the normal development services. From a clean PowerShell session at the repository root, run:
