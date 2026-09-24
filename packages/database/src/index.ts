@@ -18,11 +18,13 @@ export {
 export { closeRegisterSession, openRegisterSession } from './register-sessions.js';
 export {
   checkoutCash,
+  checkoutMixed,
   checkoutTerminal,
   finalizeTerminalAttempt,
   type CheckoutContext,
   type CheckoutLine,
   type CheckoutResult,
+  type MixedTender,
 } from './checkout.js';
 export { PosError } from './pos-errors.js';
 export { getReceipt, refundOrder, searchOrders, voidOrder } from './orders.js';
@@ -56,6 +58,25 @@ export {
   updateVariant,
   type AdminActor,
 } from './back-office.js';
+export {
+  adjustLoyalty,
+  clockIn,
+  clockOut,
+  configureLoyalty,
+  correctShift,
+  createCustomer,
+  disableGiftCard,
+  getCurrentShift,
+  getCustomerDetail,
+  getLoyaltyProgram,
+  issueGiftCard,
+  listCustomers,
+  listShifts,
+  lookupGiftCard,
+  reloadGiftCard,
+  updateCustomer,
+  type WorkforceActor,
+} from './phase-three.js';
 export {
   findProductForOrganization,
   requireRegisterContext,

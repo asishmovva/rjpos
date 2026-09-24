@@ -10,6 +10,7 @@ import type {
   TerminalPaymentResult,
 } from '@rjpos/payment-contracts';
 import { PosError, requirePositiveQuantity } from './pos-errors.js';
+import { findGiftCardByCode, giftCardBalance, loyaltyBalance } from './phase-three.js';
 
 export type CheckoutLine = {
   variantId: string;
@@ -27,6 +28,13 @@ export type CheckoutContext = {
   lines: CheckoutLine[];
   orderDiscount?: CartDiscount;
   ageVerified?: boolean;
+  customerId?: string;
+};
+
+export type MixedTender = {
+  giftCards?: Array<{ code: string; amountMinor: bigint }>;
+  loyaltyPoints?: number;
+  remainder: { kind: 'CASH'; tenderedMinor: bigint } | { kind: 'TERMINAL' };
 };
 
 export type CheckoutResult = {
@@ -42,6 +50,7 @@ export type CheckoutResult = {
   tenderedMinor?: string;
   changeDueMinor?: string;
   attemptId?: string;
+  payments?: Array<{ id: string; kind: string; status: string; amountMinor: string; capturedMinor: string }>;
 };
 
 type Tx = Prisma.TransactionClient;
@@ -122,6 +131,8 @@ async function resultForOrder(tx: Tx, organizationId: string, orderId: string): 
     totalMinor: order.totalMinor.toString(),
     ...(payment.tenderedMinor === null ? {} : { tenderedMinor: payment.tenderedMinor.toString() }),
     ...(payment.changeDueMinor === null ? {} : { changeDueMinor: payment.changeDueMinor.toString() }),
+    payments: order.payments.map((item) => ({ id: item.id, kind: item.kind, status: item.status,
+      amountMinor: item.amountMinor.toString(), capturedMinor: item.capturedMinor.toString() })),
   };
 }
 
@@ -145,6 +156,11 @@ async function prepareOrder(tx: Tx, input: CheckoutContext) {
   if (!session || session.status !== 'OPEN') throw new PosError('REGISTER_SESSION_NOT_OPEN', 409);
   if (!employeeStore || employeeStore.employee.status !== 'ACTIVE') throw new PosError('EMPLOYEE_STORE_ACCESS_DENIED', 403);
   if (!store) throw new PosError('STORE_NOT_FOUND', 404);
+  if (input.customerId) {
+    const customer = await tx.customer.findFirst({ where: { id: input.customerId, organizationId: input.organizationId } });
+    if (!customer) throw new PosError('CUSTOMER_NOT_FOUND', 404);
+    if (!customer.active) throw new PosError('CUSTOMER_INACTIVE', 409);
+  }
 
   const now = new Date();
   const requestedIds = input.lines.map((line) => line.variantId);
@@ -199,6 +215,7 @@ async function prepareOrder(tx: Tx, input: CheckoutContext) {
     discountMinor: totals.discountMinor,
     taxMinor: totals.taxMinor,
     totalMinor: totals.totalMinor,
+    ...(input.customerId ? { customerId: input.customerId } : {}),
     ...(requiresAgeVerification && input.ageVerified ? { ageVerifiedAt: now, ageVerifiedByEmployeeId: input.employeeId } : {}),
   }});
   await tx.orderItem.createMany({ data: totals.lines.map((line) => {
@@ -314,6 +331,19 @@ async function recordSaleEvents(tx: Tx, input: CheckoutContext, orderId: string,
   await Promise.all(writes);
 }
 
+async function awardLoyalty(tx: Tx, input: CheckoutContext, orderId: string, eligibleMinor: bigint): Promise<void> {
+  if (!input.customerId) return;
+  const [customer, program] = await Promise.all([
+    tx.customer.findFirst({ where: { id: input.customerId, organizationId: input.organizationId } }),
+    tx.loyaltyProgram.findUnique({ where: { organizationId: input.organizationId } }),
+  ]);
+  if (!customer?.active || !program?.enabled) return;
+  const points = Number(eligibleMinor / program.spendMinor) * program.pointsEarned;
+  if (points <= 0) return;
+  await tx.loyaltyTransaction.create({ data: { organizationId: input.organizationId, customerId: customer.id,
+    orderId, type: 'EARN', points, referenceKey: `order:${orderId}:earn` } });
+}
+
 export async function checkoutCash(prisma: PrismaClient, input: CheckoutContext & { tenderedMinor: bigint }): Promise<CheckoutResult> {
   assertCheckoutInput(input);
   const scope = 'CHECKOUT_CASH';
@@ -330,6 +360,7 @@ export async function checkoutCash(prisma: PrismaClient, input: CheckoutContext 
     }});
     await convertReservationInTransaction(tx, input.organizationId, prepared.reservationId, input.employeeId);
     await tx.order.update({ where: { id: prepared.order.id }, data: { status: 'COMPLETED', completedAt: new Date() } });
+    await awardLoyalty(tx, input, prepared.order.id, prepared.totals.totalMinor);
     await recordSaleEvents(tx, input, prepared.order.id, {
       discountApplied: prepared.totals.discountMinor > 0n,
       ageVerified: prepared.requiresAgeVerification,
@@ -404,6 +435,7 @@ export async function finalizeTerminalAttempt(
         failureCode: null, nextReconciliationAt: null } });
       await tx.payment.update({ where: { id: attempt.paymentId }, data: { status: 'CAPTURED', capturedMinor: attempt.requestedMinor } });
       await tx.order.update({ where: { id: order.id }, data: { status: 'COMPLETED', completedAt: new Date() } });
+      await awardLoyalty(tx, input, order.id, order.totalMinor);
       await recordSaleEvents(tx, input, order.id, {
         discountApplied: order.discountMinor > 0n,
         ageVerified: order.ageVerifiedAt !== null,
@@ -428,5 +460,168 @@ export async function finalizeTerminalAttempt(
     const enriched = { ...result, attemptId: attempt.id };
     if (providerResult.status !== 'UNKNOWN') await completeIdempotency(tx, input, scope, order.id, enriched);
     return enriched;
+  });
+}
+
+async function prepareMixedBenefits(
+  tx: Tx,
+  input: CheckoutContext,
+  orderId: string,
+  totalMinor: bigint,
+  tender: MixedTender,
+  pending: boolean,
+): Promise<{ allocatedMinor: bigint; loyaltyMinor: bigint }> {
+  const giftCards = tender.giftCards ?? [];
+  if (new Set(giftCards.map((item) => item.code.trim().toUpperCase())).size !== giftCards.length) {
+    throw new PosError('GIFT_CARD_DUPLICATE');
+  }
+  let allocatedMinor = 0n;
+  let loyaltyMinor = 0n;
+  const status = pending ? 'PENDING' : 'POSTED';
+
+  if (tender.loyaltyPoints !== undefined && tender.loyaltyPoints > 0) {
+    if (!input.customerId) throw new PosError('LOYALTY_CUSTOMER_REQUIRED');
+    if (!Number.isInteger(tender.loyaltyPoints)) throw new PosError('LOYALTY_POINTS_INVALID');
+    await tx.$queryRaw`SELECT id FROM "Customer" WHERE id = ${input.customerId}::uuid AND "organizationId" = ${input.organizationId}::uuid FOR UPDATE`;
+    const [customer, program] = await Promise.all([
+      tx.customer.findFirst({ where: { id: input.customerId, organizationId: input.organizationId } }),
+      tx.loyaltyProgram.findUnique({ where: { organizationId: input.organizationId } }),
+    ]);
+    if (!customer?.active) throw new PosError('CUSTOMER_INACTIVE', 409);
+    if (!program?.enabled) throw new PosError('LOYALTY_DISABLED', 409);
+    if (await loyaltyBalance(tx, input.organizationId, customer.id, true) < tender.loyaltyPoints) throw new PosError('LOYALTY_POINTS_INSUFFICIENT', 409);
+    loyaltyMinor = BigInt(tender.loyaltyPoints) * program.redeemMinorPerPoint;
+    if (loyaltyMinor > totalMinor) throw new PosError('LOYALTY_REDEMPTION_EXCEEDS_TOTAL', 409);
+    await tx.loyaltyTransaction.create({ data: { organizationId: input.organizationId, customerId: customer.id,
+      orderId, type: 'REDEEM', status, points: -tender.loyaltyPoints, referenceKey: `order:${orderId}:redeem` } });
+    await tx.payment.create({ data: { organizationId: input.organizationId, orderId, kind: 'LOYALTY', status: pending ? 'PROCESSING' : 'CAPTURED',
+      amountMinor: loyaltyMinor, capturedMinor: pending ? 0n : loyaltyMinor } });
+    allocatedMinor += loyaltyMinor;
+  } else if (tender.loyaltyPoints !== undefined && tender.loyaltyPoints !== 0) {
+    throw new PosError('LOYALTY_POINTS_INVALID');
+  }
+
+  const orderedCards = [...giftCards].sort((left, right) => left.code.localeCompare(right.code));
+  for (let index = 0; index < orderedCards.length; index += 1) {
+    const requested = orderedCards[index]!;
+    if (requested.amountMinor <= 0n) throw new PosError('GIFT_CARD_AMOUNT_INVALID');
+    const located = await findGiftCardByCode(tx, input.organizationId, requested.code);
+    await tx.$queryRaw`SELECT id FROM "GiftCard" WHERE id = ${located.id}::uuid AND "organizationId" = ${input.organizationId}::uuid FOR UPDATE`;
+    const card = await tx.giftCard.findFirst({ where: { id: located.id, organizationId: input.organizationId } });
+    if (!card) throw new PosError('GIFT_CARD_NOT_FOUND', 404);
+    if (card.status !== 'ACTIVE') throw new PosError('GIFT_CARD_DISABLED', 409);
+    if (await giftCardBalance(tx, input.organizationId, card.id, true) < requested.amountMinor) throw new PosError('GIFT_CARD_FUNDS_INSUFFICIENT', 409);
+    if (allocatedMinor + requested.amountMinor > totalMinor) throw new PosError('TENDER_EXCEEDS_TOTAL', 409);
+    await tx.giftCardTransaction.create({ data: { organizationId: input.organizationId, giftCardId: card.id,
+      orderId, employeeId: input.employeeId, type: 'REDEEM', status, amountMinor: -requested.amountMinor,
+      referenceKey: `order:${orderId}:gift:${index}` } });
+    await tx.payment.create({ data: { organizationId: input.organizationId, orderId, kind: 'GIFT_CARD', status: pending ? 'PROCESSING' : 'CAPTURED',
+      amountMinor: requested.amountMinor, capturedMinor: pending ? 0n : requested.amountMinor } });
+    allocatedMinor += requested.amountMinor;
+  }
+  return { allocatedMinor, loyaltyMinor };
+}
+
+export async function checkoutMixed(
+  prisma: PrismaClient,
+  provider: TerminalPaymentProvider,
+  input: CheckoutContext,
+  tender: MixedTender,
+): Promise<CheckoutResult> {
+  assertCheckoutInput(input);
+  const terminal = tender.remainder.kind === 'TERMINAL';
+  const scope = terminal ? 'CHECKOUT_MIXED_TERMINAL' : 'CHECKOUT_MIXED_CASH';
+  const requestFingerprint = fingerprint({ input, tender });
+  const prepared = await prisma.$transaction(async (tx) => {
+    const acquired = await acquireIdempotency(tx, input, scope, requestFingerprint);
+    if (acquired.existingOrderId) return { existing: await resultForOrder(tx, input.organizationId, acquired.existingOrderId) };
+    const orderData = await prepareOrder(tx, input);
+    const benefits = await prepareMixedBenefits(tx, input, orderData.order.id, orderData.totals.totalMinor, tender, terminal);
+    const remainingMinor = orderData.totals.totalMinor - benefits.allocatedMinor;
+    if (remainingMinor < 0n) throw new PosError('TENDER_EXCEEDS_TOTAL', 409);
+
+    if (tender.remainder.kind === 'CASH') {
+      const tenderedMinor = tender.remainder.tenderedMinor;
+      const change = calculateChangeDue(remainingMinor, tenderedMinor);
+      const payment = await tx.payment.create({ data: { organizationId: input.organizationId, orderId: orderData.order.id,
+        kind: 'CASH', status: 'CAPTURED', amountMinor: remainingMinor, capturedMinor: remainingMinor, tenderedMinor, changeDueMinor: change } });
+      await convertReservationInTransaction(tx, input.organizationId, orderData.reservationId, input.employeeId);
+      await tx.order.update({ where: { id: orderData.order.id }, data: { status: 'COMPLETED', completedAt: new Date() } });
+      await awardLoyalty(tx, input, orderData.order.id, orderData.totals.totalMinor - benefits.loyaltyMinor);
+      await recordSaleEvents(tx, input, orderData.order.id, { discountApplied: orderData.totals.discountMinor > 0n, ageVerified: orderData.requiresAgeVerification });
+      const result = await resultForOrder(tx, input.organizationId, orderData.order.id);
+      const enriched = { ...result, paymentId: payment.id, paymentStatus: payment.status, tenderedMinor: tenderedMinor.toString(), changeDueMinor: change.toString() };
+      await completeIdempotency(tx, input, scope, orderData.order.id, enriched);
+      return { existing: enriched };
+    }
+
+    if (remainingMinor <= 0n) throw new PosError('TERMINAL_AMOUNT_REQUIRED');
+    const payment = await tx.payment.create({ data: { organizationId: input.organizationId, orderId: orderData.order.id,
+      kind: 'TERMINAL', status: 'PROCESSING', amountMinor: remainingMinor } });
+    const attempt = await tx.paymentAttempt.create({ data: { organizationId: input.organizationId, paymentId: payment.id,
+      status: 'PROCESSING', idempotencyKey: input.idempotencyKey, requestedMinor: remainingMinor } });
+    await tx.order.update({ where: { id: orderData.order.id }, data: { status: 'PENDING_PAYMENT' } });
+    await tx.idempotencyKey.update({ where: { organizationId_operationScope_key: { organizationId: input.organizationId,
+      operationScope: scope, key: input.idempotencyKey } }, data: { resultReference: orderData.order.id } });
+    return { orderData, benefits, payment, attempt };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  if ('existing' in prepared) return prepared.existing;
+
+  let providerResult: TerminalPaymentResult;
+  try {
+    providerResult = await provider.authorize({ attemptId: prepared.attempt.id, amountMinor: prepared.attempt.requestedMinor.toString(),
+      currency: 'USD', idempotencyKey: input.idempotencyKey });
+  } catch {
+    providerResult = { status: 'UNKNOWN', failureCode: 'PROVIDER_EXCEPTION' };
+  }
+  return finalizeMixedTerminal(prisma, input, prepared.attempt.id, providerResult, prepared.benefits.loyaltyMinor);
+}
+
+async function finalizeMixedTerminal(
+  prisma: PrismaClient,
+  input: CheckoutContext,
+  attemptId: string,
+  providerResult: TerminalPaymentResult,
+  loyaltyMinor: bigint,
+): Promise<CheckoutResult> {
+  const scope = 'CHECKOUT_MIXED_TERMINAL';
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "PaymentAttempt" WHERE id = ${attemptId}::uuid AND "organizationId" = ${input.organizationId}::uuid FOR UPDATE`;
+    const attempt = await tx.paymentAttempt.findFirst({ where: { id: attemptId, organizationId: input.organizationId },
+      include: { payment: { include: { order: { include: { reservations: true } } } } } });
+    if (!attempt) throw new PosError('PAYMENT_ATTEMPT_NOT_FOUND', 404);
+    if (['SUCCEEDED', 'DECLINED', 'CANCELLED'].includes(attempt.status)) return resultForOrder(tx, input.organizationId, attempt.payment.orderId);
+    const order = attempt.payment.order;
+    const reservationId = order.reservations[0]?.id;
+    if (providerResult.status === 'SUCCEEDED') {
+      await convertReservationInTransaction(tx, input.organizationId, reservationId, input.employeeId);
+      await tx.paymentAttempt.update({ where: { id: attempt.id }, data: { status: 'SUCCEEDED',
+        ...(providerResult.providerTransactionId ? { providerTransactionId: providerResult.providerTransactionId } : {}), providerResultJson: providerResult as Prisma.InputJsonValue } });
+      await tx.payment.updateMany({ where: { organizationId: input.organizationId, orderId: order.id, status: 'PROCESSING' }, data: { status: 'CAPTURED' } });
+      await tx.payment.update({ where: { id: attempt.paymentId }, data: { capturedMinor: attempt.requestedMinor } });
+      const benefitPayments = await tx.payment.findMany({ where: { organizationId: input.organizationId, orderId: order.id, kind: { in: ['GIFT_CARD', 'LOYALTY'] } } });
+      for (const payment of benefitPayments) await tx.payment.update({ where: { id: payment.id }, data: { capturedMinor: payment.amountMinor } });
+      await tx.giftCardTransaction.updateMany({ where: { organizationId: input.organizationId, orderId: order.id, status: 'PENDING' }, data: { status: 'POSTED' } });
+      await tx.loyaltyTransaction.updateMany({ where: { organizationId: input.organizationId, orderId: order.id, status: 'PENDING' }, data: { status: 'POSTED' } });
+      await tx.order.update({ where: { id: order.id }, data: { status: 'COMPLETED', completedAt: new Date() } });
+      await awardLoyalty(tx, input, order.id, order.totalMinor - loyaltyMinor);
+      await recordSaleEvents(tx, input, order.id, { discountApplied: order.discountMinor > 0n, ageVerified: order.ageVerifiedAt !== null });
+    } else if (providerResult.status === 'DECLINED' || providerResult.status === 'CANCELLED' || providerResult.status === 'FAILED') {
+      await releaseReservationInTransaction(tx, input.organizationId, reservationId);
+      const paymentStatus = providerResult.status === 'DECLINED' ? 'DECLINED' : 'CANCELLED';
+      await tx.paymentAttempt.update({ where: { id: attempt.id }, data: { status: paymentStatus,
+        providerResultJson: providerResult as Prisma.InputJsonValue, ...(providerResult.failureCode ? { failureCode: providerResult.failureCode } : {}) } });
+      await tx.payment.updateMany({ where: { organizationId: input.organizationId, orderId: order.id, status: 'PROCESSING' }, data: { status: paymentStatus } });
+      await tx.giftCardTransaction.updateMany({ where: { organizationId: input.organizationId, orderId: order.id, status: 'PENDING' }, data: { status: 'CANCELLED' } });
+      await tx.loyaltyTransaction.updateMany({ where: { organizationId: input.organizationId, orderId: order.id, status: 'PENDING' }, data: { status: 'CANCELLED' } });
+      await tx.order.update({ where: { id: order.id }, data: { status: 'VOIDED', voidedAt: new Date() } });
+    } else {
+      await tx.paymentAttempt.update({ where: { id: attempt.id }, data: { status: 'UNKNOWN', providerResultJson: providerResult as Prisma.InputJsonValue,
+        ...(providerResult.failureCode ? { failureCode: providerResult.failureCode } : {}), nextReconciliationAt: new Date(Date.now() + 60_000) } });
+      await tx.payment.update({ where: { id: attempt.paymentId }, data: { status: 'UNKNOWN' } });
+    }
+    const result = { ...(await resultForOrder(tx, input.organizationId, order.id)), attemptId: attempt.id };
+    if (providerResult.status !== 'UNKNOWN') await completeIdempotency(tx, input, scope, order.id, result);
+    return result;
   });
 }

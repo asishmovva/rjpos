@@ -84,6 +84,35 @@ enum OrderStatus {
 enum PaymentKind {
   CASH
   TERMINAL
+  GIFT_CARD
+  LOYALTY
+}
+
+enum LedgerStatus {
+  PENDING
+  POSTED
+  CANCELLED
+}
+
+enum LoyaltyTransactionType {
+  EARN
+  REDEEM
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  REVERSAL
+}
+
+enum GiftCardStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum GiftCardTransactionType {
+  ISSUE
+  RELOAD
+  REDEEM
+  REFUND
+  REVERSAL
 }
 
 enum PaymentStatus {
@@ -146,6 +175,7 @@ model Organization {
   updatedAt          DateTime                   @updatedAt
   stores             Store[]
   employees          Employee[]
+  employeeShifts     EmployeeShift[]
   employeeStores     EmployeeStore[]
   roles              Role[]
   permissions        Permission[]
@@ -162,6 +192,10 @@ model Organization {
   registers          Register[]
   sessions           RegisterSession[]
   customers          Customer[]
+  loyaltyProgram     LoyaltyProgram?
+  loyaltyTransactions LoyaltyTransaction[]
+  giftCards          GiftCard[]
+  giftCardTransactions GiftCardTransaction[]
   orders             Order[]
   payments           Payment[]
   refundItems        RefundItem[]
@@ -187,6 +221,7 @@ model Store {
   organization    Organization             @relation(fields: [organizationId], references: [id])
   registers       Register[]
   employees       EmployeeStore[]
+  employeeShifts  EmployeeShift[]
   prices          Price[]
   inventoryLevels InventoryLevel[]
   movements       InventoryMovement[]
@@ -217,6 +252,10 @@ model Employee {
   ageVerifiedOrders  Order[]               @relation("OrderAgeVerifiedBy")
   roles              EmployeeRole[]
   closedSessions     RegisterSession[]      @relation("RegisterSessionClosedBy")
+  shifts             EmployeeShift[]        @relation("EmployeeShiftEmployee")
+  correctedShifts    EmployeeShift[]        @relation("EmployeeShiftCorrectedBy")
+  loyaltyAdjustments LoyaltyTransaction[]   @relation("LoyaltyTransactionEmployee")
+  giftCardTransactions GiftCardTransaction[] @relation("GiftCardTransactionEmployee")
 
   @@unique([organizationId, id])
   @@index([organizationId, lastName, firstName])
@@ -278,6 +317,31 @@ model EmployeeStore {
   @@id([organizationId, employeeId, storeId])
 }
 
+model EmployeeShift {
+  id                    String    @id @default(uuid()) @db.Uuid
+  organizationId        String    @db.Uuid
+  employeeId            String    @db.Uuid
+  storeId               String    @db.Uuid
+  registerId            String?   @db.Uuid
+  clockedInAt           DateTime  @default(now())
+  clockedOutAt          DateTime?
+  correctedClockedInAt  DateTime?
+  correctedClockedOutAt DateTime?
+  correctionReason      String?
+  correctedByEmployeeId String?   @db.Uuid
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  organization          Organization @relation(fields: [organizationId], references: [id])
+  employee              Employee  @relation("EmployeeShiftEmployee", fields: [organizationId, employeeId], references: [organizationId, id])
+  store                 Store     @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  register              Register? @relation(fields: [organizationId, registerId], references: [organizationId, id])
+  correctedBy           Employee? @relation("EmployeeShiftCorrectedBy", fields: [organizationId, correctedByEmployeeId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@index([organizationId, employeeId, clockedInAt])
+  @@index([organizationId, storeId, clockedInAt])
+}
+
 model Register {
   id               String               @id @default(uuid()) @db.Uuid
   organizationId   String               @db.Uuid
@@ -291,6 +355,7 @@ model Register {
   sessions         RegisterSession[]
   assignments      TerminalAssignment[]
   orders           Order[]
+  employeeShifts   EmployeeShift[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, storeId, id])
@@ -494,12 +559,98 @@ model Customer {
   name           String
   email          String?
   phone          String?
+  emailNormalized String?
+  phoneNormalized String?
+  notes          String?
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id])
   store          Store?       @relation(fields: [organizationId, storeId], references: [organizationId, id])
   orders         Order[]
+  loyaltyTransactions LoyaltyTransaction[]
 
   @@unique([organizationId, id])
   @@index([organizationId, name])
+  @@index([organizationId, active])
+}
+
+model LoyaltyProgram {
+  id                    String       @id @default(uuid()) @db.Uuid
+  organizationId        String       @unique @db.Uuid
+  enabled               Boolean      @default(false)
+  pointsEarned          Int          @default(1)
+  spendMinor            BigInt       @default(100)
+  redeemMinorPerPoint   BigInt       @default(1)
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  organization          Organization @relation(fields: [organizationId], references: [id])
+}
+
+model LoyaltyTransaction {
+  id             String                     @id @default(uuid()) @db.Uuid
+  organizationId String                     @db.Uuid
+  customerId     String                     @db.Uuid
+  orderId        String?                    @db.Uuid
+  refundId       String?                    @db.Uuid
+  employeeId     String?                    @db.Uuid
+  type           LoyaltyTransactionType
+  status         LedgerStatus               @default(POSTED)
+  points         Int
+  reason         String?
+  referenceKey   String?
+  createdAt      DateTime                   @default(now())
+  organization   Organization               @relation(fields: [organizationId], references: [id])
+  customer       Customer                   @relation(fields: [organizationId, customerId], references: [organizationId, id])
+  order          Order?                     @relation(fields: [organizationId, orderId], references: [organizationId, id])
+  refund         Refund?                    @relation(fields: [organizationId, refundId], references: [organizationId, id])
+  employee       Employee?                  @relation("LoyaltyTransactionEmployee", fields: [organizationId, employeeId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, referenceKey])
+  @@index([organizationId, customerId, createdAt])
+  @@index([organizationId, orderId])
+}
+
+model GiftCard {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
+  codeHash       String
+  lastFour       String
+  status         GiftCardStatus @default(ACTIVE)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  transactions   GiftCardTransaction[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, codeHash])
+  @@index([organizationId, lastFour])
+}
+
+model GiftCardTransaction {
+  id             String                  @id @default(uuid()) @db.Uuid
+  organizationId String                  @db.Uuid
+  giftCardId     String                  @db.Uuid
+  orderId        String?                 @db.Uuid
+  refundId       String?                 @db.Uuid
+  employeeId     String?                 @db.Uuid
+  type           GiftCardTransactionType
+  status         LedgerStatus            @default(POSTED)
+  amountMinor    BigInt
+  reason         String?
+  referenceKey   String?
+  createdAt      DateTime                @default(now())
+  organization   Organization            @relation(fields: [organizationId], references: [id])
+  giftCard       GiftCard                @relation(fields: [organizationId, giftCardId], references: [organizationId, id])
+  order          Order?                  @relation(fields: [organizationId, orderId], references: [organizationId, id])
+  refund         Refund?                 @relation(fields: [organizationId, refundId], references: [organizationId, id])
+  employee       Employee?               @relation("GiftCardTransactionEmployee", fields: [organizationId, employeeId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, referenceKey])
+  @@index([organizationId, giftCardId, createdAt])
+  @@index([organizationId, orderId])
 }
 
 model MerchantPaymentAccount {
@@ -589,6 +740,8 @@ model Order {
   payments          Payment[]
   refunds           Refund[]
   reservations      InventoryReservation[]
+  loyaltyTransactions LoyaltyTransaction[]
+  giftCardTransactions GiftCardTransaction[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, storeId, orderNumber])
@@ -681,6 +834,8 @@ model Refund {
   employee       Employee        @relation(fields: [organizationId, employeeId], references: [organizationId, id])
   attempts       RefundAttempt[]
   items          RefundItem[]
+  loyaltyTransactions LoyaltyTransaction[]
+  giftCardTransactions GiftCardTransaction[]
 
   @@unique([organizationId, id])
   @@index([organizationId, orderId, createdAt])
