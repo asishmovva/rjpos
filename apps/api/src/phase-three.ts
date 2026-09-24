@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
 import {
   adjustLoyalty,
@@ -26,14 +26,14 @@ import { TenantContextService, type TenantRequest } from './tenant-context.js';
 const integer = (value: string | undefined): number | undefined => {
   if (value === undefined || value === '') return undefined;
   const parsed = Number(value);
-  if (!Number.isInteger(parsed)) throw new Error('QUERY_INTEGER_INVALID');
+  if (!Number.isInteger(parsed)) throw new BadRequestException('QUERY_INTEGER_INVALID');
   return parsed;
 };
 
 const date = (value: string | undefined): Date | undefined => {
   if (!value) return undefined;
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) throw new Error('QUERY_DATE_INVALID');
+  if (Number.isNaN(parsed.getTime())) throw new BadRequestException('QUERY_DATE_INVALID');
   return parsed;
 };
 

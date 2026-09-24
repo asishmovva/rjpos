@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const API = process.env.NEXT_PUBLIC_RJPOS_API_URL ?? 'http://127.0.0.1:3001/api/v1';
 type CatalogItem = { variantId:string; productName:string; variantName:string; sku:string; barcode:string|null; priceMinor:string|null; active:boolean; ageRestricted:boolean };
@@ -43,6 +43,8 @@ export default function Register(): React.ReactNode {
   const projectedTax=(subtotal*BigInt(taxRate)+5000n)/10000n;
   const total=subtotal+projectedTax;
 
+  useEffect(()=>{void(async()=>{try{const shift=await api<{clockedOutAt:string|null}|null>('/workforce/current');setClockedIn(Boolean(shift&&shift.clockedOutAt===null));}catch{setClockedIn(false);}})();},[]);
+
   const addItem=useCallback((item:CatalogItem)=>{
     if(!item.active){setMessage('This product is inactive and cannot be sold.');return;}
     if(item.priceMinor===null){setMessage('This product has no active selling price.');return;}
@@ -61,8 +63,8 @@ export default function Register(): React.ReactNode {
   async function finishSale(orderId:string):Promise<void>{setReceipt(await api<Receipt>(`/orders/${orderId}/receipt`));setCart([]);setAgeVerified(false);setCustomer(null);setLoyaltyPoints(0);setGiftCode('');setGiftAmount('0');setMessage('Sale complete. Receipt ready to print.');}
   async function findCustomers():Promise<void>{try{const result=await api<{items:Customer[]}>(`/customers?search=${encodeURIComponent(customerSearch)}&active=true`);setCustomerResults(result.items);}catch(error){setMessage(error instanceof Error?error.message:'Customer search failed');}}
   async function selectCustomer(selected:Customer):Promise<void>{try{const [detail,program]=await Promise.all([api<Customer>(`/customers/${selected.id}`),api<LoyaltyProgram>('/loyalty/program')]);setCustomer(detail);setLoyaltyProgram(program);setCustomerResults([]);setCustomerSearch('');}catch(error){setMessage(error instanceof Error?error.message:'Customer selection failed');}}
-  async function mixedCheckout(kind:'CASH'|'TERMINAL'):Promise<void>{if(!sessionId){setMessage('Open the register before checkout.');return;}try{const amount=BigInt(giftAmount||'0');const benefit=amount+BigInt(loyaltyPoints)*BigInt(loyaltyProgram?.redeemMinorPerPoint??'0');const remainder=total-benefit;if(remainder<0n)throw new Error('TENDER_EXCEEDS_TOTAL');const result=await api<{orderId:string}>('/checkout/mixed',{method:'POST',body:JSON.stringify({registerSessionId:sessionId,idempotencyKey:crypto.randomUUID(),lines:cart.map(line=>({variantId:line.variantId,quantity:line.quantity})),ageVerified,...(customer?{customerId:customer.id}:{}),...(giftCode&&amount>0n?{giftCards:[{code:giftCode,amountMinor:amount.toString()}]}:{}),...(loyaltyPoints>0?{loyaltyPoints}:{}),remainder:kind==='CASH'?{kind,tenderedMinor:remainder.toString()}:{kind,simulatedOutcome:'APPROVED'}})});await finishSale(result.orderId);}catch(error){setMessage(error instanceof Error?error.message:'Split checkout failed');}}
-  async function toggleClock():Promise<void>{try{await api(`/workforce/${clockedIn?'clock-out':'clock-in'}`,{method:'POST',body:'{}'});setClockedIn(!clockedIn);setMessage(clockedIn?'Clocked out.':'Clocked in.');}catch(error){setMessage(error instanceof Error?error.message:'Time clock failed');}}
+  async function mixedCheckout(kind:'CASH'|'TERMINAL'):Promise<void>{if(!sessionId){setMessage('Open the register before checkout.');return;}try{const amount=BigInt(giftAmount||'0');const benefit=amount+BigInt(loyaltyPoints)*BigInt(loyaltyProgram?.redeemMinorPerPoint??'0');const rawRemainder=total-benefit;if(kind==='TERMINAL'&&rawRemainder<=0n)throw new Error('TERMINAL_AMOUNT_REQUIRED');const remainder=rawRemainder<0n?0n:rawRemainder;const result=await api<{orderId:string}>('/checkout/mixed',{method:'POST',body:JSON.stringify({registerSessionId:sessionId,idempotencyKey:crypto.randomUUID(),lines:cart.map(line=>({variantId:line.variantId,quantity:line.quantity})),ageVerified,...(customer?{customerId:customer.id}:{}),...(giftCode&&amount>0n?{giftCards:[{code:giftCode,amountMinor:amount.toString()}]}:{}),...(loyaltyPoints>0?{loyaltyPoints}:{}),remainder:kind==='CASH'?{kind,tenderedMinor:remainder.toString()}:{kind,simulatedOutcome:'APPROVED'}})});await finishSale(result.orderId);}catch(error){setMessage(error instanceof Error?error.message:'Split checkout failed');}}
+  async function toggleClock():Promise<void>{try{const shift=await api<{clockedOutAt:string|null}>(`/workforce/${clockedIn?'clock-out':'clock-in'}`,{method:'POST',body:'{}'});const active=shift.clockedOutAt===null;setClockedIn(active);setMessage(active?'Clocked in.':'Clocked out.');}catch(error){setMessage(error instanceof Error?error.message:'Time clock failed');}}
   async function loadHistory():Promise<void>{try{setHistory(await api('/orders'));setView('orders');}catch(error){setMessage(error instanceof Error?error.message:'History failed');}}
   async function loadInventory():Promise<void>{try{setInventory(await api('/inventory'));setView('inventory');}catch(error){setMessage(error instanceof Error?error.message:'Inventory failed');}}
   async function closeRegister():Promise<void>{if(!sessionId)return;try{await api(`/register-sessions/${sessionId}/close`,{method:'POST',body:JSON.stringify({countedCashMinor:'10000'})});setSessionId('');setMessage('Register closed. Cash difference is recorded.');}catch(error){setMessage(error instanceof Error?error.message:'Could not close register');}}

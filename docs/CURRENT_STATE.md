@@ -4,7 +4,7 @@ Updated: 2026-09-24
 
 ## Phase
 
-Phases 0â€“2 remain complete. Phase 3 Employees, Customers, Loyalty & Gift Cards is implemented: database-backed workforce timekeeping, customer profiles and purchase history, configurable ledger-backed loyalty, secure internal gift cards, and gift-card split tender now extend the existing register and back-office system.
+Phases 0–2 remain complete. Phase 3 Employees, Customers, Loyalty & Gift Cards is implemented: database-backed workforce timekeeping, customer profiles and purchase history, configurable ledger-backed loyalty, secure internal gift cards, and gift-card split tender now extend the existing register and back-office system.
 
 ## Delivered
 

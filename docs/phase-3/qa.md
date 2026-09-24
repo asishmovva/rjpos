@@ -1,4 +1,4 @@
-# Phase 3 Employees, Customers, Loyalty & Gift Cards â€” QA Handoff
+# Phase 3 Employees, Customers, Loyalty & Gift Cards — QA Handoff
 
 Updated: 2026-09-24
 
@@ -33,11 +33,11 @@ pnpm test            30/30 build/test tasks successful
 git diff --check     exit 0 (line-ending notices only)
 ```
 
-No required test failed, was disabled, or was skipped. Behavioral countsâ€”not Turbo task countsâ€”are:
+No required test failed, was disabled, or was skipped. Behavioral counts—not Turbo task counts—are:
 
 | Package | Passed |
 | --- | ---: |
-| `@rjpos/api` | 19 |
+| `@rjpos/api` | 20 |
 | `@rjpos/api-contracts` | 3 |
 | `@rjpos/auth` | 2 |
 | `@rjpos/config` | 10 |
@@ -48,9 +48,9 @@ No required test failed, was disabled, or was skipped. Behavioral countsâ€”
 | `@rjpos/payment-contracts` | 12 |
 | `@rjpos/register` | 6 |
 | `@rjpos/ui` | 1 |
-| `@rjpos/web` | 9 |
+| `@rjpos/web` | 11 |
 | `@rjpos/worker` | 1 |
-| **Total** | **112** |
+| **Total** | **115** |
 
 Exactly two packages have zero behavioral tests and their successful tasks are not counted as behavioral validation:
 
@@ -73,7 +73,7 @@ pnpm test            30/30 build/test tasks successful
 git diff --check     exit 0
 ```
 
-The rerun again passed the Phase 3 database race/integration assertions (`@rjpos/database` 36/36) and the backend-backed API E2E suites (`@rjpos/api` 19/19, including `phase-three.e2e.test.ts`).
+The rerun again passed the Phase 3 database race/integration assertions (`@rjpos/database` 36/36) and the backend-backed API E2E suites (`@rjpos/api` 20/20, including `phase-three.e2e.test.ts` and query-validation coverage for malformed Phase 3 list parameters).
 
 ## Runtime evidence
 
