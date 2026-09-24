@@ -1,10 +1,10 @@
 # Current State
 
-Updated: 2026-09-23
+Updated: 2026-09-24
 
 ## Phase
 
-Phase 0 remains complete. Phase 1 Core POS is implemented and under final QA: catalog lookup, ledger-backed inventory, register sessions, deterministic cart/tax/discount calculations, idempotent cash and simulated-terminal checkout, receipts, sales history, compensating voids/refunds, API RBAC, and the Next.js/Electron register workflow are present.
+Phase 0 and Phase 1 remain complete. Phase 2 Back-Office Management is implemented and verified: the administrative shell, catalog/category/variant lifecycle, effective-dated pricing, ledger-backed inventory administration and low-stock signals, employees/RBAC, stores/registers, order/refund/audit views, settings, and an authoritative operational dashboard are present.
 
 ## Delivered
 
@@ -21,6 +21,8 @@ Phase 0 remains complete. Phase 1 Core POS is implemented and under final QA: ca
 - Phase 1 product/variant catalog with store prices, SKU/UPC lookup, active, age-restricted, tax-category, cost, and inventory-tracking attributes.
 - PostgreSQL-backed register open/close lifecycle, server-authoritative checkout, cash tender/change, simulated terminal uncertainty, receipts/history, full/partial refunds, and void compensation.
 - Responsive Next.js register workflow with keyboard-scanner entry, repeated-scan quantity behavior, cart controls, age acknowledgment, cash/terminal checkout, printable receipt, inventory view, and order history.
+- Tenant-scoped `/admin` application and `/api/v1/admin` boundary for products, variants, categories, prices, inventory history/adjustments, employees, stores, registers, orders, refunds, audit, settings, and dashboard.
+- PostgreSQL-enforced concurrent UPC and effective-price conflict handling, active-session lifecycle safeguards, and a real API/controller-to-database catalog-to-sale-to-admin E2E flow.
 
 ## Local Endpoint
 
@@ -28,4 +30,4 @@ RJ POS Docker Compose maps PostgreSQL to `127.0.0.1:15432` and Redis to `127.0.0
 
 ## Verification
 
-Phase 0 evidence remains in `docs/phase-0/final-qa.md`. Phase 1 implementation and current QA evidence are recorded separately under `docs/phase-1/`. Real payment-provider and certified-hardware integration remain intentionally out of scope.
+Phase 0 evidence remains in `docs/phase-0/final-qa.md`. Phase 1 evidence remains under `docs/phase-1/`; Phase 2 implementation and QA evidence are under `docs/phase-2/`. Real payment-provider, certified-hardware, purchasing/vendor, loyalty, and advanced analytics work remain intentionally out of scope.

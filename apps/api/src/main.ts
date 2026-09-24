@@ -24,6 +24,7 @@ import {
   POSTGRES_CHECK,
   REDIS_CHECK,
 } from './health.js';
+import { BackOfficeController } from './back-office.js';
 
 const environment = loadEnvironment();
 const prisma = new PrismaClient({
@@ -31,7 +32,7 @@ const prisma = new PrismaClient({
 });
 
 @Module({
-  controllers: [HealthController, CorePosController],
+  controllers: [HealthController, CorePosController, BackOfficeController],
   providers: [
     HealthService,
     TenantContextService,
