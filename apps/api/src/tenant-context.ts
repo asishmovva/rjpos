@@ -12,9 +12,9 @@ export type AuthenticatedTenantContext = {
 export type TenantRequest = Request & { tenantContext?: AuthenticatedTenantContext };
 
 export const rolePermissions: Record<string, readonly string[]> = {
-  OWNER: ['catalog:read', 'catalog:manage', 'price:manage', 'inventory:read', 'inventory:adjust', 'employee:manage', 'store:manage', 'register:manage', 'register:open', 'register:close', 'sale:create', 'discount:apply', 'order:read', 'order:void', 'order:refund', 'audit:read', 'dashboard:read', 'settings:write'],
-  MANAGER: ['catalog:read', 'catalog:manage', 'price:manage', 'inventory:read', 'inventory:adjust', 'employee:manage', 'register:manage', 'register:open', 'register:close', 'sale:create', 'discount:apply', 'order:read', 'order:void', 'order:refund', 'audit:read', 'dashboard:read'],
-  CASHIER: ['catalog:read', 'inventory:read', 'register:open', 'sale:create', 'order:read'],
+  OWNER: ['catalog:read', 'catalog:manage', 'price:manage', 'inventory:read', 'inventory:adjust', 'employee:manage', 'store:manage', 'register:manage', 'register:open', 'register:close', 'sale:create', 'discount:apply', 'order:read', 'order:void', 'order:refund', 'audit:read', 'dashboard:read', 'settings:write', 'workforce:clock', 'workforce:manage', 'customer:read', 'customer:manage', 'loyalty:manage', 'giftcard:manage', 'giftcard:redeem'],
+  MANAGER: ['catalog:read', 'catalog:manage', 'price:manage', 'inventory:read', 'inventory:adjust', 'employee:manage', 'register:manage', 'register:open', 'register:close', 'sale:create', 'discount:apply', 'order:read', 'order:void', 'order:refund', 'audit:read', 'dashboard:read', 'workforce:clock', 'workforce:manage', 'customer:read', 'customer:manage', 'loyalty:manage', 'giftcard:manage', 'giftcard:redeem'],
+  CASHIER: ['catalog:read', 'inventory:read', 'register:open', 'sale:create', 'order:read', 'workforce:clock', 'customer:read', 'customer:manage', 'giftcard:redeem'],
 };
 
 export function contextFromDevelopmentHeaders(request: Request): AuthenticatedTenantContext {
