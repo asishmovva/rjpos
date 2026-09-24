@@ -50,6 +50,14 @@ describe('Phase 2 back-office authorization', () => {
     }
   });
 
+  it('separates self-service workforce/customer selling permissions from manager-only corrections and value administration', () => {
+    expect(rolePermissions.CASHIER).toEqual(expect.arrayContaining(['workforce:clock', 'customer:read', 'customer:manage', 'giftcard:redeem']));
+    expect(rolePermissions.CASHIER).not.toEqual(expect.arrayContaining(['workforce:manage', 'loyalty:manage', 'giftcard:manage']));
+    for (const role of ['OWNER', 'MANAGER']) {
+      expect(rolePermissions[role]).toEqual(expect.arrayContaining(['workforce:manage', 'loyalty:manage', 'giftcard:manage']));
+    }
+  });
+
   it('rejects inactive employees even when a supplied role header claims Owner', async () => {
     const prisma = { employee: { findFirst: vi.fn(async () => null) } };
     const controller = new BackOfficeController(prisma as never, new TenantContextService());

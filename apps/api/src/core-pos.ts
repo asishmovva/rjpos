@@ -16,6 +16,7 @@ import type { PrismaClient } from '@prisma/client';
 import {
   adjustInventory,
   checkoutCash,
+  checkoutMixed,
   checkoutTerminal,
   closeRegisterSession,
   getInventorySnapshot,
@@ -57,6 +58,7 @@ type CheckoutBody = {
   orderDiscount?: DiscountBody;
   ageVerified?: boolean;
   tenderedMinor?: string;
+  customerId?: string;
 };
 
 function discountFromBody(discount: DiscountBody | undefined): CartDiscount | undefined {
@@ -137,7 +139,8 @@ export class CorePosController {
       lines: body.lines.map((line) => ({ variantId: line.variantId, quantity: line.quantity,
         ...(line.discount ? { discount: discountFromBody(line.discount)! } : {}) })),
       ...(body.orderDiscount ? { orderDiscount: discountFromBody(body.orderDiscount)! } : {}),
-      ...(body.ageVerified === undefined ? {} : { ageVerified: body.ageVerified }) };
+      ...(body.ageVerified === undefined ? {} : { ageVerified: body.ageVerified }),
+      ...(body.customerId ? { customerId: body.customerId } : {}) };
   }
 
   @Post('checkout/cash')
@@ -155,6 +158,26 @@ export class CorePosController {
     const context = this.context(request, 'sale:create');
     if (body.simulatedOutcome) this.terminal.setOutcome(body.simulatedOutcome as Parameters<SimulatedTerminalProvider['setOutcome']>[0]);
     return checkoutTerminal(this.prisma, this.terminal, this.checkoutInput(context, body));
+  }
+
+  @Post('checkout/mixed')
+  mixedCheckout(@Req() request: TenantRequest, @Body() body: CheckoutBody & {
+    giftCards?: Array<{ code: string; amountMinor: string }>;
+    loyaltyPoints?: number;
+    remainder: { kind: 'CASH'; tenderedMinor: string } | { kind: 'TERMINAL'; simulatedOutcome?: string };
+  }) {
+    const context = this.context(request, 'sale:create');
+    if ((body.giftCards?.length ?? 0) > 0 && !context.permissions.has('giftcard:redeem')) throw new ForbiddenException();
+    if (body.remainder.kind === 'TERMINAL' && body.remainder.simulatedOutcome) {
+      this.terminal.setOutcome(body.remainder.simulatedOutcome as Parameters<SimulatedTerminalProvider['setOutcome']>[0]);
+    }
+    return checkoutMixed(this.prisma, this.terminal, this.checkoutInput(context, body), {
+      ...(body.giftCards ? { giftCards: body.giftCards.map((item) => ({ code: item.code, amountMinor: parseMoneyApi(item.amountMinor) })) } : {}),
+      ...(body.loyaltyPoints === undefined ? {} : { loyaltyPoints: body.loyaltyPoints }),
+      remainder: body.remainder.kind === 'CASH'
+        ? { kind: 'CASH', tenderedMinor: parseMoneyApi(body.remainder.tenderedMinor) }
+        : { kind: 'TERMINAL' },
+    });
   }
 
   @Get('orders')
