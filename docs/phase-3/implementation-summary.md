@@ -1,4 +1,4 @@
-# Phase 3 Employees, Customers, Loyalty & Gift Cards â€” Implementation Summary
+# Phase 3 Employees, Customers, Loyalty & Gift Cards — Implementation Summary
 
 Updated: 2026-09-24
 

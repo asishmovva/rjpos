@@ -37,6 +37,12 @@ const date = (value: string | undefined): Date | undefined => {
   return parsed;
 };
 
+const requiredDate = (value: string | undefined): Date => {
+  const parsed = date(value);
+  if (!parsed) throw new BadRequestException('QUERY_DATE_INVALID');
+  return parsed;
+};
+
 @Controller('/api/v1')
 export class PhaseThreeController {
   constructor(
@@ -84,7 +90,7 @@ export class PhaseThreeController {
   async fixShift(@Req() request: TenantRequest, @Param('shiftId') shiftId: string,
     @Body() body: { clockedInAt: string; clockedOutAt: string; reason: string }) {
     return correctShift(this.prisma, await this.actor(request, 'workforce:manage'), shiftId,
-      { clockedInAt: new Date(body.clockedInAt), clockedOutAt: new Date(body.clockedOutAt), reason: body.reason });
+      { clockedInAt: requiredDate(body.clockedInAt), clockedOutAt: requiredDate(body.clockedOutAt), reason: body.reason });
   }
 
   @Get('customers')

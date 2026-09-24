@@ -27,14 +27,20 @@ const requireText = (value: string, code: string): string => {
 const normalizeEmail = (value?: string | null): string | null => {
   if (!value?.trim()) return null;
   const normalized = value.trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) throw new PosError('CUSTOMER_EMAIL_INVALID');
+  if (normalized.includes(' ')) throw new PosError('CUSTOMER_EMAIL_INVALID');
+  const at = normalized.indexOf('@');
+  if (at <= 0 || at !== normalized.lastIndexOf('@')) throw new PosError('CUSTOMER_EMAIL_INVALID');
+  const domain = normalized.slice(at + 1);
+  if (!domain || domain.startsWith('.') || domain.endsWith('.') || !domain.includes('.')) throw new PosError('CUSTOMER_EMAIL_INVALID');
   return normalized;
 };
 
 const normalizePhone = (value?: string | null): string | null => {
   if (!value?.trim()) return null;
-  const normalized = value.trim().replace(/[^0-9+]/g, '');
-  if (!/^\+?[0-9]{7,15}$/.test(normalized)) throw new PosError('CUSTOMER_PHONE_INVALID');
+  const normalized = value.trim().replaceAll(/[^\d+]/g, '');
+  const startsWithPlus = normalized.startsWith('+');
+  const digits = startsWithPlus ? normalized.slice(1) : normalized;
+  if (!digits || digits.length < 7 || digits.length > 15 || digits.includes('+') || !/^\d+$/.test(digits)) throw new PosError('CUSTOMER_PHONE_INVALID');
   return normalized;
 };
 
