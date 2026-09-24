@@ -18,6 +18,11 @@ enum RegisterStatus {
   INACTIVE
 }
 
+enum StoreStatus {
+  ACTIVE
+  INACTIVE
+}
+
 enum EmployeeStatus {
   ACTIVE
   INACTIVE
@@ -175,6 +180,10 @@ model Store {
   name            String
   addressJson     Json?
   taxRateBasisPoints Int                    @default(0)
+  timezone        String                   @default("America/New_York")
+  status          StoreStatus              @default(ACTIVE)
+  receiptFooter   String?
+  ageRestrictionLabel String               @default("21+")
   organization    Organization             @relation(fields: [organizationId], references: [id])
   registers       Register[]
   employees       EmployeeStore[]
@@ -292,6 +301,7 @@ model Category {
   id             String       @id @default(uuid()) @db.Uuid
   organizationId String       @db.Uuid
   name           String
+  active         Boolean      @default(true)
   organization   Organization @relation(fields: [organizationId], references: [id])
   products       Product[]
 
@@ -330,6 +340,7 @@ model ProductVariant {
   unit               ProductUnit                @default(EACH)
   active             Boolean                    @default(true)
   costMinor          BigInt?
+  lowStockThreshold  Int                        @default(0)
   organization       Organization               @relation(fields: [organizationId], references: [id])
   product            Product                    @relation(fields: [organizationId, productId], references: [organizationId, id])
   barcodes           Barcode[]
@@ -402,6 +413,8 @@ model InventoryMovement {
   type           InventoryMovementType
   referenceType  String?
   referenceId    String?
+  reason          String?
+  resultingOnHand Int?
   employeeId     String?               @db.Uuid
   createdAt      DateTime              @default(now())
   organization   Organization          @relation(fields: [organizationId], references: [id])

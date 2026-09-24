@@ -16,6 +16,7 @@ async function requireRegisterEmployee(
         organizationId: input.organizationId,
         storeId: input.storeId,
         status: 'ACTIVE',
+        store: { status: 'ACTIVE' },
       },
     }),
     tx.employeeStore.findUnique({
@@ -46,6 +47,18 @@ export async function openRegisterSession(
 ) {
   if (input.openingCashMinor < 0n) throw new Error('OPENING_CASH_INVALID');
   return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`
+      SELECT id FROM "Store"
+      WHERE id = ${input.storeId}::uuid
+        AND "organizationId" = ${input.organizationId}::uuid
+      FOR UPDATE
+    `;
+    await tx.$queryRaw`
+      SELECT id FROM "Register"
+      WHERE id = ${input.registerId}::uuid
+        AND "organizationId" = ${input.organizationId}::uuid
+      FOR UPDATE
+    `;
     await requireRegisterEmployee(tx, input);
     const session = await tx.registerSession.create({ data: input });
     await Promise.all([

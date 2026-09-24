@@ -53,7 +53,7 @@ export async function postOpeningBalance(
       },
     });
     if (existing) throw new Error('OPENING_BALANCE_ALREADY_POSTED');
-    await tx.inventoryLevel.upsert({
+    const level = await tx.inventoryLevel.upsert({
       where: {
         organizationId_storeId_variantId: {
           organizationId: input.organizationId,
@@ -78,7 +78,8 @@ export async function postOpeningBalance(
         quantityDelta: input.quantity,
         type: 'INITIAL',
         referenceType: 'OPENING_BALANCE',
-        referenceId: input.reason.trim(),
+        reason: input.reason.trim(),
+        resultingOnHand: level.onHand,
       },
     });
     await tx.auditRecord.create({
@@ -127,7 +128,7 @@ export async function adjustInventory(
     if (!level) throw new Error('INVENTORY_LEVEL_NOT_FOUND');
     if (level.onHand + input.quantity < level.reserved)
       throw new Error('INVENTORY_WOULD_BE_NEGATIVE');
-    await tx.inventoryLevel.update({
+    const updatedLevel = await tx.inventoryLevel.update({
       where: { id: level.id },
       data: { onHand: { increment: input.quantity } },
     });
@@ -140,7 +141,8 @@ export async function adjustInventory(
         quantityDelta: input.quantity,
         type: input.quantity > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT',
         referenceType: 'MANUAL_ADJUSTMENT',
-        referenceId: input.reason.trim(),
+        reason: input.reason.trim(),
+        resultingOnHand: updatedLevel.onHand,
       },
     });
     await tx.auditRecord.create({
