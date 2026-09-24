@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { contextFromDevelopmentHeaders, rolePermissions } from '../src/tenant-context.js';
+import { describe, expect, it, vi } from 'vitest';
+import { BackOfficeController } from '../src/back-office.js';
+import { contextFromDevelopmentHeaders, rolePermissions, TenantContextService } from '../src/tenant-context.js';
 
 function request(role: string) {
   return { header: (name: string) => name === 'x-rjpos-role' ? role : undefined } as never;
@@ -31,5 +32,29 @@ describe('Phase 1 API role permissions', () => {
     expect(rolePermissions.OWNER).toContain('settings:write');
     expect(rolePermissions.MANAGER).not.toContain('settings:write');
     expect(rolePermissions.CASHIER).not.toContain('settings:write');
+  });
+});
+
+describe('Phase 2 back-office authorization', () => {
+  it('gives Owner the complete administrative boundary and keeps settings/store management Owner-only', () => {
+    expect(rolePermissions.OWNER).toEqual(expect.arrayContaining(['catalog:manage', 'price:manage', 'inventory:adjust', 'employee:manage', 'store:manage', 'register:manage', 'order:refund', 'audit:read', 'dashboard:read', 'settings:write']));
+    expect(rolePermissions.MANAGER).toEqual(expect.arrayContaining(['catalog:manage', 'price:manage', 'inventory:adjust', 'employee:manage', 'register:manage', 'order:refund', 'audit:read', 'dashboard:read']));
+    expect(rolePermissions.MANAGER).not.toContain('store:manage');
+    expect(rolePermissions.MANAGER).not.toContain('settings:write');
+  });
+
+  it('does not grant Cashier access to administrative APIs', () => {
+    const permissions = contextFromDevelopmentHeaders(request('CASHIER')).permissions;
+    for (const permission of ['catalog:manage', 'price:manage', 'inventory:adjust', 'employee:manage', 'store:manage', 'register:manage', 'audit:read', 'dashboard:read', 'settings:write']) {
+      expect(permissions.has(permission)).toBe(false);
+    }
+  });
+
+  it('rejects inactive employees even when a supplied role header claims Owner', async () => {
+    const prisma = { employee: { findFirst: vi.fn(async () => null) } };
+    const controller = new BackOfficeController(prisma as never, new TenantContextService());
+    const tenantContext = contextFromDevelopmentHeaders(request('OWNER'));
+    await expect(controller.dashboard({ tenantContext } as never)).rejects.toMatchObject({ status: 403 });
+    expect(prisma.employee.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ status: 'ACTIVE' }) }));
   });
 });

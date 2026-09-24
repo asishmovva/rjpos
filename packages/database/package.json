@@ -15,7 +15,7 @@
     "build": "prisma generate && tsc -p tsconfig.json",
     "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --no-file-parallelism",
     "test:prepare": "tsx scripts/prepare-test-database.ts",
     "db:deploy": "tsx scripts/deploy-development-database.ts",
     "db:seed": "tsx prisma/seed.ts",
