@@ -35,4 +35,4 @@ RJ POS Docker Compose maps PostgreSQL to `127.0.0.1:15432` and Redis to `127.0.0
 
 ## Verification
 
-Phase 0 evidence remains in `docs/phase-0/final-qa.md`. Phase 1 evidence remains under `docs/phase-1/`; Phase 2 evidence is under `docs/phase-2/`; Phase 3 implementation and QA evidence is under `docs/phase-3/`. Real payment-provider, certified-hardware, purchasing/vendor, payroll/scheduling, advanced loyalty/marketing, and advanced analytics work remain intentionally out of scope.
+Phase 0 evidence remains in `docs/phase-0/final-qa.md`. Phase 1 evidence remains under `docs/phase-1/`; Phase 2 evidence is under `docs/phase-2/`; Phase 3 implementation and QA evidence is under `docs/phase-3/`. Closure re-verification on 2026-09-24 repeated all required gates (`pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm test`, `git diff --check`) with passing results and reconfirmed the PostgreSQL-backed Phase 3 race/E2E coverage. Real payment-provider, certified-hardware, purchasing/vendor, payroll/scheduling, advanced loyalty/marketing, and advanced analytics work remain intentionally out of scope.

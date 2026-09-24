@@ -63,6 +63,18 @@ There are no mocked-only packages and no known package missing required Phase 3 
 
 The earlier integration session also found the dedicated test services stopped. `docker compose -f docker/docker-compose.yml --profile test up -d --wait postgres-test redis-test` restored only the isolated services. Test preparation revalidated `127.0.0.1:15433/rjpos_test`, found all seven migrations applied, and did not connect to or modify the development database.
 
+Closure re-verification was repeated on 2026-09-24 against the current `copilot/phase-3` branch state with the same required gates and behavioral totals:
+
+```text
+pnpm typecheck       30/30 dependency and typecheck tasks successful
+pnpm lint            30/30 dependency and lint tasks successful
+pnpm build           15/15 package builds successful
+pnpm test            30/30 build/test tasks successful
+git diff --check     exit 0
+```
+
+The rerun again passed the Phase 3 database race/integration assertions (`@rjpos/database` 36/36) and the backend-backed API E2E suites (`@rjpos/api` 19/19, including `phase-three.e2e.test.ts`).
+
 ## Runtime evidence
 
 A clean built API process (PID 3656, `node dist/main.js`) owned port 3001 and the repository Next.js process (PID 22552) owned port 3000. The built API startup log mapped `PhaseThreeController`, `/api/v1/checkout/mixed`, and all workforce/customer/loyalty/gift-card routes before reporting application startup.
@@ -104,6 +116,8 @@ The real Electron binary then loaded the independent web server and emitted:
 ```
 
 The Electron process exited 0. This smoke, rather than the six register unit tests, proves the built entry point launched, the live RJ POS UI rendered, the preload bridge and `hardware:status` IPC worked, and the security boundary remained enabled. The temporary API and web processes were stopped afterward; ports 3000 and 3001 had no listeners.
+
+In this closure sandbox, a repeated Electron smoke attempt could not complete because Linux SUID sandbox permissions for the packaged Electron helper are unavailable in this environment (`chrome-sandbox ... not configured correctly`). Register security boundary assertions still passed in `apps/register/tests/security.test.ts` as part of the required `pnpm test` gate.
 
 ## Known limitations
 
