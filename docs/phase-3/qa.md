@@ -1,4 +1,4 @@
-# Phase 3 Employees, Customers, Loyalty & Gift Cards â€” QA Handoff
+# Phase 3 Employees, Customers, Loyalty & Gift Cards — QA Handoff
 
 Updated: 2026-09-24
 
@@ -33,11 +33,11 @@ pnpm test            30/30 build/test tasks successful
 git diff --check     exit 0 (line-ending notices only)
 ```
 
-No required test failed, was disabled, or was skipped. Behavioral countsâ€”not Turbo task countsâ€”are:
+No required test failed, was disabled, or was skipped. Behavioral counts—not Turbo task counts—are:
 
 | Package | Passed |
 | --- | ---: |
-| `@rjpos/api` | 19 |
+| `@rjpos/api` | 20 |
 | `@rjpos/api-contracts` | 3 |
 | `@rjpos/auth` | 2 |
 | `@rjpos/config` | 10 |
@@ -48,9 +48,9 @@ No required test failed, was disabled, or was skipped. Behavioral countsâ€”
 | `@rjpos/payment-contracts` | 12 |
 | `@rjpos/register` | 6 |
 | `@rjpos/ui` | 1 |
-| `@rjpos/web` | 9 |
+| `@rjpos/web` | 11 |
 | `@rjpos/worker` | 1 |
-| **Total** | **112** |
+| **Total** | **115** |
 
 Exactly two packages have zero behavioral tests and their successful tasks are not counted as behavioral validation:
 
@@ -59,9 +59,21 @@ Exactly two packages have zero behavioral tests and their successful tasks are n
 | `@rjpos/api-client` | Compile-only | Declaration/client transport package; Phase 3 adds no runtime behavior there. |
 | `@rjpos/hardware-contracts` | Compile-only | Declaration-only native boundary; hardware implementation remains outside Phase 3. |
 
-There are no mocked-only packages and no known package missing required Phase 3 coverage. The database package passed 36/36, including eight Phase 3 integration/race tests. The API package passed 19/19, including the real Phase 2 and Phase 3 controller-to-PostgreSQL E2E tests. The first full monorepo attempt exposed a deadlock/write conflict between independent API E2E files sharing the same isolated test database. The API package now runs files with `--no-file-parallelism`; explicit race assertions remain concurrent. The subsequent focused API run and final full run passed.
+There are no mocked-only packages and no known package missing required Phase 3 coverage. The database package passed 36/36, including eight Phase 3 integration/race tests. The API package passed 20/20, including the real Phase 2 and Phase 3 controller-to-PostgreSQL E2E tests. The first full monorepo attempt exposed a deadlock/write conflict between independent API E2E files sharing the same isolated test database. The API package now runs files with `--no-file-parallelism`; explicit race assertions remain concurrent. The subsequent focused API run and final full run passed.
 
 The earlier integration session also found the dedicated test services stopped. `docker compose -f docker/docker-compose.yml --profile test up -d --wait postgres-test redis-test` restored only the isolated services. Test preparation revalidated `127.0.0.1:15433/rjpos_test`, found all seven migrations applied, and did not connect to or modify the development database.
+
+Closure re-verification was repeated on 2026-09-24 against the current `copilot/phase-3` branch state with the same required gates and behavioral totals:
+
+```text
+pnpm typecheck       30/30 dependency and typecheck tasks successful
+pnpm lint            30/30 dependency and lint tasks successful
+pnpm build           15/15 package builds successful
+pnpm test            30/30 build/test tasks successful
+git diff --check     exit 0
+```
+
+The rerun again passed the Phase 3 database race/integration assertions (`@rjpos/database` 36/36) and the backend-backed API E2E suites (`@rjpos/api` 20/20, including `phase-three.e2e.test.ts` and query-validation coverage for malformed Phase 3 list parameters).
 
 ## Runtime evidence
 
@@ -104,6 +116,8 @@ The real Electron binary then loaded the independent web server and emitted:
 ```
 
 The Electron process exited 0. This smoke, rather than the six register unit tests, proves the built entry point launched, the live RJ POS UI rendered, the preload bridge and `hardware:status` IPC worked, and the security boundary remained enabled. The temporary API and web processes were stopped afterward; ports 3000 and 3001 had no listeners.
+
+In this closure sandbox, a repeated Electron smoke attempt could not complete because Linux SUID sandbox permissions for the packaged Electron helper are unavailable in this environment (`chrome-sandbox ... not configured correctly`). Register security boundary assertions still passed in `apps/register/tests/security.test.ts` as part of the required `pnpm test` gate.
 
 ## Known limitations
 

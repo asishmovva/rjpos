@@ -1,6 +1,6 @@
 # RJ POS
 
-RJ POS is a multi-tenant retail point-of-sale platform. Phase 0 established the runtime foundation; Phases 1â€“3 add the complete register and back-office workflows plus workforce, customer, loyalty, gift-card, and split-tender operations while retaining the NestJS API, secure Electron boundary, worker, PostgreSQL, Redis, and shared contracts.
+RJ POS is a multi-tenant retail point-of-sale platform. Phase 0 established the runtime foundation; Phases 1–3 add the complete register and back-office workflows plus workforce, customer, loyalty, gift-card, and split-tender operations while retaining the NestJS API, secure Electron boundary, worker, PostgreSQL, Redis, and shared contracts.
 
 ## Local development
 
