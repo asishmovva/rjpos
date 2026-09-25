@@ -22,7 +22,7 @@ pnpm --filter "@rjpos/web" dev
 pnpm --filter "@rjpos/register" dev
 ```
 
-The web application listens explicitly on port 3000. During development, Electron loads `RJPOS_RENDERER_URL` from the repository-root `.env`, falling back to `http://localhost:3000`. It performs a bounded availability check before loading the URL; if the web server remains unavailable, Electron shows a visible error page and logs the failure without entering an automatic reload loop. A packaged Electron application loads its copied local `renderer.html` instead. Renderer code remains sandboxed behind the preload bridge and `hardware:status` IPC; it does not access Prisma or PostgreSQL directly.
+The web application listens explicitly on port 3000. During development, Electron loads `RJPOS_RENDERER_URL` from the repository-root `.env`, falling back to `http://localhost:3000`. It allows up to 60 seconds for a concurrently-starting Next.js server to become reachable before showing a visible error page; it never enters an automatic reload loop. If the bounded startup window expires but the web server later becomes reachable, restart only the register with `pnpm --filter "@rjpos/register" dev`. A packaged Electron application loads its copied local `renderer.html` instead. Renderer code remains sandboxed behind the preload bridge and `hardware:status` IPC; it does not access Prisma or PostgreSQL directly.
 
 Payment provider credentials and certified hardware are intentionally not required for Phase 0. The first payment implementation is the simulated terminal contract.
 
