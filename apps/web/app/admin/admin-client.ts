@@ -11,6 +11,10 @@ export type OrderRow = { id: string; orderNumber: string; status: string; totalM
 export type RefundRow = { id: string; status: string; amountMinor: string; reason: string; createdAt: string; order: { orderNumber: string; store: Store }; employee: { firstName: string; lastName: string } };
 export type MovementRow = { id: string; createdAt: string; type: string; quantityDelta: number; resultingOnHand: number | null; reason: string | null; referenceType: string | null; referenceId: string | null; store: { name: string }; employee: { firstName: string; lastName: string } | null; variant: Variant & { product: { name: string } } };
 export type Dashboard = { salesMinor: string; transactions: number; refundMinor: string; openRegisters: number; lowStockProducts: number; asOf: string };
+export type Shift = { id: string; clockedInAt: string; clockedOutAt: string | null; correctedClockedInAt: string | null; correctedClockedOutAt: string | null; correctionReason: string | null; workedSeconds: number; employee: { firstName: string; lastName: string }; store: { name: string }; register: { name: string } | null };
+export type Customer = { id: string; name: string; email: string | null; phone: string | null; notes: string | null; active: boolean; pointsBalance?: number; orders?: OrderRow[]; loyaltyTransactions?: Array<{ id: string; type: string; points: number; reason: string | null; createdAt: string }> };
+export type LoyaltyProgram = { enabled: boolean; pointsEarned: number; spendMinor: string; redeemMinorPerPoint: string } | null;
+export type GiftCardDetail = { id: string; lastFour: string; status: string; balanceMinor: string; availableMinor: string; history: Array<{ id: string; type: string; status: string; amountMinor: string; reason: string | null; createdAt: string }> };
 
 function query(values: Record<string, string | number | boolean | undefined>): string {
   const params = new URLSearchParams();
@@ -22,6 +26,13 @@ function query(values: Record<string, string | number | boolean | undefined>): s
 export async function adminRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${ADMIN_API}/admin${path}`, { ...init, headers: { 'content-type': 'application/json', 'x-rjpos-role': 'OWNER', ...init?.headers } });
   const body = await response.json() as T & { error?: { code?: string }; requestId?: string };
+  if (!response.ok) throw new Error(body.error?.code ?? `HTTP_${response.status}`);
+  return body;
+}
+
+export async function phaseThreeRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${ADMIN_API}${path}`, { ...init, headers: { 'content-type': 'application/json', 'x-rjpos-role': 'OWNER', ...init?.headers } });
+  const body = await response.json() as T & { error?: { code?: string } };
   if (!response.ok) throw new Error(body.error?.code ?? `HTTP_${response.status}`);
   return body;
 }
@@ -58,6 +69,19 @@ export const adminApi = {
   refunds: (search = '') => adminRequest<PageResult<RefundRow>>(`/refunds${query({ search })}`),
   audit: () => adminRequest<PageResult<{ id: string; action: string; entityType: string; entityId: string; createdAt: string }>>('/audit?pageSize=100'),
   settings: () => adminRequest<Store[]>('/settings'),
+  shifts: () => phaseThreeRequest<PageResult<Shift>>('/admin/shifts?pageSize=100'),
+  correctShift: (id: string, body: { clockedInAt: string; clockedOutAt: string; reason: string }) => phaseThreeRequest(`/admin/shifts/${id}`, json('PATCH', body)),
+  customers: (search = '') => phaseThreeRequest<PageResult<Customer>>(`/customers${query({ search, pageSize: 100 })}`),
+  customer: (id: string) => phaseThreeRequest<Customer>(`/customers/${id}`),
+  createCustomer: (body: { name: string; email?: string; phone?: string; notes?: string }) => phaseThreeRequest<Customer>('/customers', json('POST', body)),
+  updateCustomer: (id: string, body: Record<string, unknown>) => phaseThreeRequest<Customer>(`/customers/${id}`, json('PATCH', body)),
+  loyaltyProgram: () => phaseThreeRequest<LoyaltyProgram>('/loyalty/program'),
+  configureLoyalty: (body: { enabled: boolean; pointsEarned: number; spendMinor: string; redeemMinorPerPoint: string }) => phaseThreeRequest('/admin/loyalty/program', json('PATCH', body)),
+  adjustLoyalty: (customerId: string, body: { points: number; reason: string }) => phaseThreeRequest(`/admin/customers/${customerId}/loyalty-adjustments`, json('POST', body)),
+  issueGiftCard: (body: { amountMinor: string; reason?: string }) => phaseThreeRequest<{ id: string; code: string; balanceMinor: string }>('/admin/gift-cards', json('POST', body)),
+  giftCard: (code: string) => phaseThreeRequest<GiftCardDetail>(`/gift-cards/lookup${query({ code })}`),
+  reloadGiftCard: (body: { code: string; amountMinor: string; reason: string }) => phaseThreeRequest('/admin/gift-cards/reload', json('POST', body)),
+  disableGiftCard: (id: string, reason: string) => phaseThreeRequest(`/admin/gift-cards/${id}/disable`, json('POST', { reason })),
 };
 
 export async function createCatalogFlow(input: {

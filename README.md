@@ -1,6 +1,6 @@
 # RJ POS
 
-RJ POS is a multi-tenant retail point-of-sale platform. Phase 0 established the runtime foundation; Phase 1 adds a complete register, sale, receipt, history, void, and refund workflow while retaining the NestJS API, secure Electron boundary, worker, PostgreSQL, Redis, and shared contracts.
+RJ POS is a multi-tenant retail point-of-sale platform. Phase 0 established the runtime foundation; Phases 1–3 add the complete register and back-office workflows plus workforce, customer, loyalty, gift-card, and split-tender operations while retaining the NestJS API, secure Electron boundary, worker, PostgreSQL, Redis, and shared contracts.
 
 ## Local development
 
@@ -43,6 +43,14 @@ After deploying migration `0004_phase2_back_office`, open `http://localhost:3000
 The New product workflow can create a category, product, variant/SKU/UPC, current store price, low-stock threshold, and opening inventory in one guided operation. Each step calls an explicit `/api/v1/admin` operation; the browser never talks to Prisma or PostgreSQL. Return to `/` (or the secure Electron host), scan the new UPC, sell it, and use the admin Orders and Inventory areas to verify the authoritative result.
 
 Manual inventory changes require a signed integer delta and reason and always create ledger/audit records. Price changes append effective-dated rows and retain history. Products, variants, categories, employees, stores, and registers use active/inactive lifecycle states; active register sessions prevent unsafe register/store changes.
+
+## Phase 3 Workforce and Customer Value
+
+The register now supports employee clock in/out, optional customer attachment, projected and redeemed loyalty points, internal gift-card redemption, and gift-card plus cash or simulated-terminal split tender. Walk-in checkout remains supported. The back office adds shift history/corrections, customer profiles and purchase history, loyalty configuration/manual adjustments, and gift-card issue, reload, lookup, history, and disable operations.
+
+Loyalty and gift-card balances are derived from immutable transaction ledgers. Checkout, void, and refund operations create compensating entries; they do not rewrite economic history. Customer, shift, and card access remains tenant-scoped, sensitive management operations require Owner or Manager permissions, and concurrent balance use is serialized in PostgreSQL. Gift-card codes are generated from cryptographically secure random bytes and stored only as hashes; the plaintext code is returned only when issued.
+
+Phase 3 remains internal-only: it does not add payroll, scheduling, marketing campaigns, loyalty tiers, network gift cards, or real payment terminals.
 
 ## Integration-test setup
 

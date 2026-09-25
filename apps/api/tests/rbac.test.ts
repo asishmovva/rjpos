@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BackOfficeController } from '../src/back-office.js';
+import { PhaseThreeController } from '../src/phase-three.js';
 import { contextFromDevelopmentHeaders, rolePermissions, TenantContextService } from '../src/tenant-context.js';
 
 function request(role: string) {
@@ -50,11 +51,26 @@ describe('Phase 2 back-office authorization', () => {
     }
   });
 
+  it('separates self-service workforce/customer selling permissions from manager-only corrections and value administration', () => {
+    expect(rolePermissions.CASHIER).toEqual(expect.arrayContaining(['workforce:clock', 'customer:read', 'customer:manage', 'giftcard:redeem']));
+    expect(rolePermissions.CASHIER).not.toEqual(expect.arrayContaining(['workforce:manage', 'loyalty:manage', 'giftcard:manage']));
+    for (const role of ['OWNER', 'MANAGER']) {
+      expect(rolePermissions[role]).toEqual(expect.arrayContaining(['workforce:manage', 'loyalty:manage', 'giftcard:manage']));
+    }
+  });
+
   it('rejects inactive employees even when a supplied role header claims Owner', async () => {
     const prisma = { employee: { findFirst: vi.fn(async () => null) } };
     const controller = new BackOfficeController(prisma as never, new TenantContextService());
     const tenantContext = contextFromDevelopmentHeaders(request('OWNER'));
     await expect(controller.dashboard({ tenantContext } as never)).rejects.toMatchObject({ status: 403 });
     expect(prisma.employee.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ status: 'ACTIVE' }) }));
+  });
+});
+
+describe('Phase 3 query validation', () => {
+  it('returns a 400-style error for malformed pagination query values', async () => {
+    const controller = new PhaseThreeController({} as never, new TenantContextService());
+    await expect(controller.shifts({} as never, { page: 'abc' })).rejects.toMatchObject({ status: 400 });
   });
 });

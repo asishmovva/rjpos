@@ -8,7 +8,9 @@ describe('RJ POS web foundation', () => {
     const markup = renderToStaticMarkup(<Dashboard />);
     expect(markup).toContain('Downtown Register');
     expect(markup).toContain('Scan UPC');
-    expect(markup).toContain('Final pricing and inventory are verified by the server.');
+    expect(markup).toContain('Final pricing, benefits, and inventory are verified by the server.');
+    expect(markup).toContain('Walk-in customer');
+    expect(markup).toContain('Gift-card code');
   });
 
   it('renders through the root document shell with English metadata', () => {

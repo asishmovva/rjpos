@@ -19,6 +19,11 @@ describe('Phase 2 back-office interactions', () => {
     if (url.includes('/admin/products?')) return response(emptyPage);
     if (url.includes('/admin/categories?')) return response({ ...emptyPage, pageSize: 100 });
     if (url.endsWith('/admin/stores')) return response([{ id: 'store-1', name: 'Downtown', status: 'ACTIVE', timezone: 'America/New_York', taxRateBasisPoints: 625, receiptFooter: null }]);
+    if (url.includes('/customers?')) return response({ ...emptyPage, pageSize: 100 });
+    if (url.endsWith('/customers') && method === 'POST') return response({ id: 'customer-1', name: 'Jamie', email: 'jamie@example.test', phone: null, notes: null, active: true });
+    if (url.endsWith('/loyalty/program')) return response({ enabled: true, pointsEarned: 1, spendMinor: '100', redeemMinorPerPoint: '10' });
+    if (url.endsWith('/admin/gift-cards') && method === 'POST') return response({ id: 'gift-1', code: 'RJ-ABCDEF0123456789ABCDEF0123456789', balanceMinor: '2500' });
+    if (url.includes('/gift-cards/lookup')) return response({ id: 'gift-1', lastFour: '6789', status: 'ACTIVE', balanceMinor: '2500', availableMinor: '2500', history: [] });
     return response(emptyPage);
   })); });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -73,5 +78,29 @@ describe('Phase 2 back-office interactions', () => {
     const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
     expect(urls).toEqual(expect.arrayContaining([expect.stringContaining('/admin/orders?search=RJP-100'), expect.stringContaining('/admin/refunds?search=RJP-100')]));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  });
+
+  it('creates customers through the Phase 3 profile workflow', async () => {
+    const user = userEvent.setup(); render(<AdminPage/>);
+    await screen.findByText('Transactions');
+    await user.click(screen.getByRole('button', { name: 'Customers' }));
+    await screen.findByText('No customers match this search.');
+    await user.type(screen.getByLabelText('Name'), 'Jamie');
+    await user.type(screen.getByLabelText('Email'), 'jamie@example.test');
+    await user.click(screen.getByRole('button', { name: 'Create customer' }));
+    expect((await screen.findByRole('status')).textContent).toContain('Customer created.');
+    expect(vi.mocked(fetch).mock.calls).toEqual(expect.arrayContaining([
+      expect.arrayContaining([expect.stringContaining('/customers'), expect.objectContaining({ method: 'POST' })]),
+    ]));
+  });
+
+  it('issues and immediately looks up a gift card without exposing an internal identifier as the code', async () => {
+    const user = userEvent.setup(); render(<AdminPage/>);
+    await screen.findByText('Transactions');
+    await user.click(screen.getByRole('button', { name: 'Gift Cards' }));
+    await user.type(screen.getByLabelText('Issue amount, cents'), '2500');
+    await user.click(screen.getByRole('button', { name: 'Issue gift card' }));
+    expect((await screen.findByRole('status')).textContent).toContain('RJ-ABCDEF0123456789ABCDEF0123456789');
+    expect(await screen.findByText('$25.00')).toBeTruthy();
   });
 });
