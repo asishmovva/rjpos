@@ -253,6 +253,7 @@ model Store {
 
   @@unique([organizationId, id])
   @@index([organizationId, name])
+  @@index([organizationId, status, name], map: "Store_organizationId_status_name_idx")
 }
 
 model Employee {
@@ -285,7 +286,7 @@ model Role {
   id             String           @id @default(uuid()) @db.Uuid
   organizationId String           @db.Uuid
   name           String
-  organization   Organization     @relation(fields: [organizationId], references: [id])
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   employees      EmployeeRole[]
   permissions    RolePermission[]
 
@@ -297,7 +298,7 @@ model Permission {
   id             String           @id @default(uuid()) @db.Uuid
   organizationId String           @db.Uuid
   code           String
-  organization   Organization     @relation(fields: [organizationId], references: [id])
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   roles          RolePermission[]
 
   @@unique([organizationId, id])
@@ -308,9 +309,9 @@ model EmployeeRole {
   organizationId String       @db.Uuid
   employeeId     String       @db.Uuid
   roleId         String       @db.Uuid
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  employee       Employee     @relation(fields: [organizationId, employeeId], references: [organizationId, id])
-  role           Role         @relation(fields: [organizationId, roleId], references: [organizationId, id])
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  employee       Employee     @relation(fields: [organizationId, employeeId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
+  role           Role         @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
 
   @@id([organizationId, employeeId, roleId])
 }
@@ -319,9 +320,9 @@ model RolePermission {
   organizationId String       @db.Uuid
   roleId         String       @db.Uuid
   permissionId   String       @db.Uuid
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  role           Role         @relation(fields: [organizationId, roleId], references: [organizationId, id])
-  permission     Permission   @relation(fields: [organizationId, permissionId], references: [organizationId, id])
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  role           Role         @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
+  permission     Permission   @relation(fields: [organizationId, permissionId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
 
   @@id([organizationId, roleId, permissionId])
 }
@@ -350,16 +351,16 @@ model EmployeeShift {
   correctionReason      String?
   correctedByEmployeeId String?      @db.Uuid
   createdAt             DateTime     @default(now())
-  updatedAt             DateTime     @updatedAt
-  organization          Organization @relation(fields: [organizationId], references: [id])
-  employee              Employee     @relation("EmployeeShiftEmployee", fields: [organizationId, employeeId], references: [organizationId, id])
-  store                 Store        @relation(fields: [organizationId, storeId], references: [organizationId, id])
-  register              Register?    @relation(fields: [organizationId, registerId], references: [organizationId, id])
-  correctedBy           Employee?    @relation("EmployeeShiftCorrectedBy", fields: [organizationId, correctedByEmployeeId], references: [organizationId, id])
+  updatedAt             DateTime     @default(now()) @updatedAt
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  employee              Employee     @relation("EmployeeShiftEmployee", fields: [organizationId, employeeId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
+  store                 Store        @relation(fields: [organizationId, storeId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
+  register              Register?    @relation(fields: [organizationId, registerId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
+  correctedBy           Employee?    @relation("EmployeeShiftCorrectedBy", fields: [organizationId, correctedByEmployeeId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([organizationId, id])
-  @@index([organizationId, employeeId, clockedInAt])
-  @@index([organizationId, storeId, clockedInAt])
+  @@index([organizationId, employeeId, clockedInAt(sort: Desc)], map: "EmployeeShift_employee_history_idx")
+  @@index([organizationId, storeId, clockedInAt(sort: Desc)], map: "EmployeeShift_store_history_idx")
 }
 
 model Register {
@@ -392,6 +393,7 @@ model Category {
 
   @@unique([organizationId, id])
   @@unique([organizationId, name])
+  @@index([organizationId, active, name], map: "Category_organizationId_active_name_idx")
 }
 
 model Product {
@@ -477,6 +479,7 @@ model Price {
 
   @@unique([organizationId, id])
   @@index([organizationId, storeId, variantId, effectiveFrom])
+  @@index([organizationId, storeId, variantId, effectiveFrom, effectiveTo], map: "price_lookup_effective")
 }
 
 model InventoryLevel {
@@ -516,6 +519,7 @@ model InventoryMovement {
   @@unique([organizationId, id])
   @@index([organizationId, storeId, variantId, createdAt])
   @@index([organizationId, referenceType, referenceId])
+  @@index([organizationId, storeId, createdAt(sort: Desc)], map: "InventoryMovement_admin_history_idx")
 }
 
 model InventoryReservation {
@@ -590,7 +594,7 @@ model Customer {
   notes               String?
   active              Boolean              @default(true)
   createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
+  updatedAt           DateTime             @default(now()) @updatedAt
   organization        Organization         @relation(fields: [organizationId], references: [id])
   store               Store?               @relation(fields: [organizationId, storeId], references: [organizationId, id])
   orders              Order[]
@@ -609,8 +613,8 @@ model LoyaltyProgram {
   spendMinor          BigInt       @default(100)
   redeemMinorPerPoint BigInt       @default(1)
   createdAt           DateTime     @default(now())
-  updatedAt           DateTime     @updatedAt
-  organization        Organization @relation(fields: [organizationId], references: [id])
+  updatedAt           DateTime     @default(now()) @updatedAt
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model LoyaltyTransaction {
@@ -626,15 +630,15 @@ model LoyaltyTransaction {
   reason         String?
   referenceKey   String?
   createdAt      DateTime               @default(now())
-  organization   Organization           @relation(fields: [organizationId], references: [id])
-  customer       Customer               @relation(fields: [organizationId, customerId], references: [organizationId, id])
-  order          Order?                 @relation(fields: [organizationId, orderId], references: [organizationId, id])
-  refund         Refund?                @relation(fields: [organizationId, refundId], references: [organizationId, id])
-  employee       Employee?              @relation("LoyaltyTransactionEmployee", fields: [organizationId, employeeId], references: [organizationId, id])
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer       Customer               @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
+  order          Order?                 @relation(fields: [organizationId, orderId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
+  refund         Refund?                @relation(fields: [organizationId, refundId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
+  employee       Employee?              @relation("LoyaltyTransactionEmployee", fields: [organizationId, employeeId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([organizationId, id])
   @@unique([organizationId, referenceKey])
-  @@index([organizationId, customerId, createdAt])
+  @@index([organizationId, customerId, createdAt(sort: Desc)], map: "LoyaltyTransaction_customer_history_idx")
   @@index([organizationId, orderId])
 }
 
@@ -645,8 +649,8 @@ model GiftCard {
   lastFour       String
   status         GiftCardStatus        @default(ACTIVE)
   createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
-  organization   Organization          @relation(fields: [organizationId], references: [id])
+  updatedAt      DateTime              @default(now()) @updatedAt
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   transactions   GiftCardTransaction[]
 
   @@unique([organizationId, id])
@@ -667,15 +671,15 @@ model GiftCardTransaction {
   reason         String?
   referenceKey   String?
   createdAt      DateTime                @default(now())
-  organization   Organization            @relation(fields: [organizationId], references: [id])
-  giftCard       GiftCard                @relation(fields: [organizationId, giftCardId], references: [organizationId, id])
-  order          Order?                  @relation(fields: [organizationId, orderId], references: [organizationId, id])
-  refund         Refund?                 @relation(fields: [organizationId, refundId], references: [organizationId, id])
-  employee       Employee?               @relation("GiftCardTransactionEmployee", fields: [organizationId, employeeId], references: [organizationId, id])
+  organization   Organization            @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  giftCard       GiftCard                @relation(fields: [organizationId, giftCardId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
+  order          Order?                  @relation(fields: [organizationId, orderId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
+  refund         Refund?                 @relation(fields: [organizationId, refundId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
+  employee       Employee?               @relation("GiftCardTransactionEmployee", fields: [organizationId, employeeId], references: [organizationId, id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([organizationId, id])
   @@unique([organizationId, referenceKey])
-  @@index([organizationId, giftCardId, createdAt])
+  @@index([organizationId, giftCardId, createdAt(sort: Desc)], map: "GiftCardTransaction_history_idx")
   @@index([organizationId, orderId])
 }
 

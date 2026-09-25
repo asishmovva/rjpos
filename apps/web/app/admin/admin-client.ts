@@ -66,7 +66,7 @@ export const adminApi = {
   categories: (search = '') => adminRequest<PageResult<Category>>(`/categories${query({ search, pageSize: 100 })}`),
   createCategory: (name: string) => adminRequest<Category>('/categories', json('POST', { name })),
   updateCategory: (id: string, body: { name?: string; active?: boolean }) => adminRequest<Category>(`/categories/${id}`, json('PATCH', body)),
-  products: (search = '', page = 1) => adminRequest<PageResult<Product>>(`/products${query({ search, page, pageSize: 25 })}`),
+  products: (search = '', page = 1, pageSize = 25) => adminRequest<PageResult<Product>>(`/products${query({ search, page, pageSize })}`),
   createProduct: (body: { categoryId: string; name: string; brand?: string; taxCategory?: string; ageRestricted?: boolean; inventoryTracked?: boolean }) => adminRequest<Product>('/products', json('POST', body)),
   updateProduct: (id: string, body: Record<string, unknown>) => adminRequest<Product>(`/products/${id}`, json('PATCH', body)),
   createVariant: (productId: string, body: { name: string; sku: string; barcode?: string; size?: string; unit?: string; costMinor?: string; lowStockThreshold?: number }) => adminRequest<Variant>(`/products/${productId}/variants`, json('POST', body)),

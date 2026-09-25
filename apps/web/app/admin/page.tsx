@@ -51,8 +51,8 @@ export default function AdminPage(): React.ReactNode {
       if (target === 'Registers') { const [registerResult, storeResult] = await Promise.all([adminApi.registers(), adminApi.stores()]); setRegisters(registerResult); setStores(storeResult); }
       if (target === 'Master Catalog') { const [result, categoryResult, storeResult] = await Promise.all([adminApi.masterCatalog(term), adminApi.categories(), adminApi.stores()]); setMasterCatalog(result.items); setCategories(categoryResult.items); setStores(storeResult); }
       if (target === 'Vendors') setVendors((await adminApi.vendors(term)).items);
-      if (target === 'Vendor Mappings') { const [mappingResult, vendorResult, productResult] = await Promise.all([adminApi.vendorMappings('', term), adminApi.vendors(), adminApi.products('', 1)]); setVendorMappings(mappingResult.items); setVendors(vendorResult.items); setProducts(productResult.items); }
-      if (target === 'Purchase Orders') { const [poResult, vendorResult, storeResult, productResult] = await Promise.all([adminApi.purchaseOrders(term), adminApi.vendors('', true), adminApi.stores(), adminApi.products('', 1)]); setPurchaseOrders(poResult.items); setVendors(vendorResult.items); setStores(storeResult); setProducts(productResult.items); }
+      if (target === 'Vendor Mappings') { const [mappingResult, vendorResult] = await Promise.all([adminApi.vendorMappings('', term), adminApi.vendors()]); setVendorMappings(mappingResult.items); setVendors(vendorResult.items); }
+      if (target === 'Purchase Orders') { const [poResult, vendorResult, storeResult] = await Promise.all([adminApi.purchaseOrders(term), adminApi.vendors('', true), adminApi.stores()]); setPurchaseOrders(poResult.items); setVendors(vendorResult.items); setStores(storeResult); }
       if (target === 'Receiving History') setReceivingHistory((await adminApi.receivingHistory()).items);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not load this area.'); }
     finally { setLoading(false); }
@@ -94,10 +94,10 @@ export default function AdminPage(): React.ReactNode {
           <VendorsView rows={vendors} run={action}/>
         )}
         {area === 'Vendor Mappings' && (
-          <VendorMappingsView rows={vendorMappings} vendors={vendors} products={products} run={action}/>
+          <VendorMappingsView rows={vendorMappings} vendors={vendors} run={action}/>
         )}
         {area === 'Purchase Orders' && (
-          <PurchaseOrdersView rows={purchaseOrders} vendors={vendors} stores={stores} products={products} run={action}/>
+          <PurchaseOrdersView rows={purchaseOrders} vendors={vendors} stores={stores} run={action}/>
         )}
         {area === 'Receiving History' && (
           <ReceivingHistoryView rows={receivingHistory}/>
@@ -211,6 +211,54 @@ function flattenVariants(products: Product[]): Array<{ id: string; label: string
   return products.flatMap((product) => product.variants.map((variant) => ({ id: variant.id, label: `${product.name} · ${variant.name} · ${variant.sku}` })));
 }
 
+function VariantPicker({ label, value, selectedLabel, name, required, onChange }: {
+  label: string;
+  value: string;
+  selectedLabel?: string;
+  name?: string;
+  required?: boolean;
+  onChange: (variantId: string, variantLabel: string) => void;
+}): React.ReactNode {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [page, setPage] = useState(1);
+  const [result, setResult] = useState<{ items: Product[]; page: number; pageSize: number; total: number }>();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      setError('');
+      void adminApi.products(searchTerm, page).then((nextResult) => {
+        if (active) setResult(nextResult);
+      }).catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : 'Could not load product variants.');
+      }).finally(() => {
+        if (active) setLoading(false);
+      });
+    }, 250);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [page, searchTerm]);
+
+  const options = flattenVariants(result?.items ?? []);
+  if (value && selectedLabel && !options.some((option) => option.id === value)) options.unshift({ id: value, label: selectedLabel });
+  const pageCount = Math.max(1, Math.ceil((result?.total ?? 0) / (result?.pageSize ?? 25)));
+
+  return <div className="variant-picker">
+    <label>{label}<input aria-label={`Search ${label}`} type="search" value={searchTerm} onChange={(event) => { setSearchTerm(event.target.value); setPage(1); }} placeholder="Search products, brands, SKUs, or barcodes"/></label>
+    <select aria-label={label} name={name} value={value} required={required} onChange={(event) => onChange(event.target.value, event.currentTarget.selectedOptions[0]?.textContent ?? '')}>
+      <option value="">Choose product</option>{options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+    </select>
+    <div className="variant-picker-pages" aria-live="polite">
+      <span>{loading ? 'Searching…' : result ? `${result.total} products · page ${result.page} of ${pageCount}` : 'Search products to select a variant'}</span>
+      <button type="button" aria-label={`Previous ${label} page`} disabled={loading || page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button>
+      <button type="button" aria-label={`Next ${label} page`} disabled={loading || !result || page >= pageCount} onClick={() => setPage((current) => current + 1)}>Next</button>
+    </div>
+    {error && <p role="alert" className="admin-alert error">{error}</p>}
+  </div>;
+}
+
 function MasterCatalogView({ rows, categories, stores, run }: { rows: MasterProduct[]; categories: Category[]; stores: Store[]; run: (operation: () => Promise<unknown>, message: string) => Promise<void> }): React.ReactNode {
   const [upc, setUpc] = useState('');
   const [lookup, setLookup] = useState<CatalogLookupResult>();
@@ -317,19 +365,19 @@ function VendorsView({ rows, run }: { rows: Vendor[]; run: (operation: () => Pro
   <DataTable headers={['Vendor', 'Contact', 'Account ref', 'Mappings / POs', 'Status', 'Actions']} empty="No vendors match this search.">{rows.map((vendor) => <tr key={vendor.id}><td><strong>{vendor.name}</strong>{vendor.addressJson?.city && <small>{vendor.addressJson.city}{vendor.addressJson.state ? `, ${vendor.addressJson.state}` : ''}</small>}</td><td>{vendor.contactName ?? '—'}<small>{vendor.email ?? vendor.phone ?? 'No contact info'}</small></td><td>{vendor.accountReference ?? '—'}</td><td>{vendor._count?.mappings ?? 0} / {vendor._count?.purchaseOrders ?? 0}</td><td><Pill value={vendor.active ? 'ACTIVE' : 'INACTIVE'}/></td><td><button onClick={() => editVendor(vendor)}>Edit</button><button onClick={() => void run(() => adminApi.updateVendor(vendor.id, { active: !vendor.active }), `Vendor ${vendor.active ? 'deactivated' : 'activated'}.`)}>{vendor.active ? 'Deactivate' : 'Activate'}</button></td></tr>)}</DataTable></>;
 }
 
-function VendorMappingsView({ rows, vendors, products, run }: { rows: VendorMapping[]; vendors: Vendor[]; products: Product[]; run: (operation: () => Promise<unknown>, message: string) => Promise<void> }): React.ReactNode {
+function VendorMappingsView({ rows, vendors, run }: { rows: VendorMapping[]; vendors: Vendor[]; run: (operation: () => Promise<unknown>, message: string) => Promise<void> }): React.ReactNode {
   const [editing, setEditing] = useState<VendorMapping>();
   const [show, setShow] = useState(false);
-  const variantOptions = flattenVariants(products);
+  const [selectedVariantId, setSelectedVariantId] = useState('');
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault(); const form = event.currentTarget; const fields = new FormData(form);
     await run(() => adminApi.saveVendorMapping({ id: editing?.id, vendorId: String(fields.get('vendorId')), variantId: String(fields.get('variantId')), vendorSku: String(fields.get('vendorSku')) || undefined, vendorCostMinor: String(fields.get('vendorCostMinor')), casePackQuantity: Number(fields.get('casePackQuantity')) || undefined, minimumOrderQuantity: Number(fields.get('minimumOrderQuantity')) || undefined, preferred: fields.get('preferred') === 'on', active: fields.get('active') === 'on' }), editing ? 'Vendor mapping updated.' : 'Vendor mapping created.');
-    form.reset(); setShow(false); setEditing(undefined);
+    form.reset(); setShow(false); setEditing(undefined); setSelectedVariantId('');
   }
-  return <><div className="toolbar"><p>{rows.length} vendor mappings on this page</p><button className="primary" onClick={() => { setEditing(undefined); setShow(!show); }}>{show && !editing ? 'Cancel' : 'New mapping'}</button></div>
+  return <><div className="toolbar"><p>{rows.length} vendor mappings on this page</p><button className="primary" onClick={() => { if (show && !editing) setShow(false); else { setEditing(undefined); setSelectedVariantId(''); setShow(true); } }}>{show && !editing ? 'Cancel' : 'New mapping'}</button></div>
     {show && <form className="admin-form wide" key={editing?.id ?? 'new-mapping'} onSubmit={(event) => void submit(event)}>
       <label>Vendor<select name="vendorId" required defaultValue={editing?.vendorId ?? ''}><option value="">Choose vendor</option>{vendors.filter(({ active }) => active).map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}</select></label>
-      <label>Product / variant<select name="variantId" required defaultValue={editing?.variantId ?? ''}><option value="">Choose product</option>{variantOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
+      <VariantPicker label="Product / variant" name="variantId" required value={selectedVariantId} selectedLabel={editing ? `${editing.variant.product.name} · ${editing.variant.name} · ${editing.variant.sku}` : undefined} onChange={(variantId) => setSelectedVariantId(variantId)}/>
       <label>Vendor SKU<input name="vendorSku" defaultValue={editing?.vendorSku ?? ''}/></label>
       <label>Vendor cost, cents<input name="vendorCostMinor" required inputMode="numeric" defaultValue={editing?.vendorCostMinor ?? ''}/></label>
       <label>Case pack quantity<input name="casePackQuantity" type="number" min="1" defaultValue={editing?.casePackQuantity ?? 1}/></label>
@@ -338,24 +386,23 @@ function VendorMappingsView({ rows, vendors, products, run }: { rows: VendorMapp
       <label>Active<input name="active" type="checkbox" defaultChecked={editing?.active ?? true}/></label>
       <button className="primary">{editing ? 'Save mapping' : 'Create mapping'}</button>
     </form>}
-    <DataTable headers={['Vendor', 'Product / variant', 'Vendor SKU', 'Cost', 'Case pack', 'MOQ', 'Preferred', 'Status', 'Actions']} empty="No vendor mappings match this search.">{rows.map((mapping) => <tr key={mapping.id}><td>{mapping.vendor.name}</td><td>{mapping.variant.product.name} · {mapping.variant.name} · {mapping.variant.sku}</td><td>{mapping.vendorSku ?? '—'}</td><td>{money(mapping.vendorCostMinor)}</td><td>{mapping.casePackQuantity}</td><td>{mapping.minimumOrderQuantity}</td><td><Pill value={mapping.preferred ? 'PREFERRED' : 'STANDARD'}/></td><td><Pill value={mapping.active ? 'ACTIVE' : 'INACTIVE'}/></td><td><button onClick={() => { setEditing(mapping); setShow(true); }}>Edit</button><button onClick={() => void run(() => adminApi.saveVendorMapping({ id: mapping.id, vendorId: mapping.vendorId, variantId: mapping.variantId, vendorCostMinor: mapping.vendorCostMinor, active: !mapping.active }), `Vendor mapping ${mapping.active ? 'deactivated' : 'activated'}.`)}>{mapping.active ? 'Deactivate' : 'Activate'}</button></td></tr>)}</DataTable></>;
+    <DataTable headers={['Vendor', 'Product / variant', 'Vendor SKU', 'Cost', 'Case pack', 'MOQ', 'Preferred', 'Status', 'Actions']} empty="No vendor mappings match this search.">{rows.map((mapping) => <tr key={mapping.id}><td>{mapping.vendor.name}</td><td>{mapping.variant.product.name} · {mapping.variant.name} · {mapping.variant.sku}</td><td>{mapping.vendorSku ?? '—'}</td><td>{money(mapping.vendorCostMinor)}</td><td>{mapping.casePackQuantity}</td><td>{mapping.minimumOrderQuantity}</td><td><Pill value={mapping.preferred ? 'PREFERRED' : 'STANDARD'}/></td><td><Pill value={mapping.active ? 'ACTIVE' : 'INACTIVE'}/></td><td><button onClick={() => { setEditing(mapping); setSelectedVariantId(mapping.variantId); setShow(true); }}>Edit</button><button onClick={() => void run(() => adminApi.saveVendorMapping({ id: mapping.id, vendorId: mapping.vendorId, variantId: mapping.variantId, vendorCostMinor: mapping.vendorCostMinor, active: !mapping.active }), `Vendor mapping ${mapping.active ? 'deactivated' : 'activated'}.`)}>{mapping.active ? 'Deactivate' : 'Activate'}</button></td></tr>)}</DataTable></>;
 }
 
-type PurchaseDraftLine = { variantId: string; quantity: number; unitCostMinor: string };
+type PurchaseDraftLine = { variantId: string; variantLabel?: string; quantity: number; unitCostMinor: string };
 type PurchaseDraft = { id?: string; poNumber: string; vendorId: string; storeId: string; notes: string; lines: PurchaseDraftLine[] };
 type ReceivingLine = { purchaseOrderLineId: string; label: string; remaining: number; deliveredQuantity: string; damagedQuantity: string; rejectedQuantity: string; unitCostMinor: string };
 type Receiving = { poId: string; idempotencyKey: string; vendorReferenceNumber: string; notes: string; lines: ReceivingLine[] };
 
-function PurchaseOrdersView({ rows, vendors, stores, products, run }: { rows: PurchaseOrderRow[]; vendors: Vendor[]; stores: Store[]; products: Product[]; run: (operation: () => Promise<unknown>, message: string) => Promise<void> }): React.ReactNode {
+function PurchaseOrdersView({ rows, vendors, stores, run }: { rows: PurchaseOrderRow[]; vendors: Vendor[]; stores: Store[]; run: (operation: () => Promise<unknown>, message: string) => Promise<void> }): React.ReactNode {
   const [draft, setDraft] = useState<PurchaseDraft>();
   const [lowStock, setLowStock] = useState<InventoryRow[]>([]);
   const [selectedLowStock, setSelectedLowStock] = useState<string[]>([]);
   const [detail, setDetail] = useState<PurchaseOrderDetail>();
   const [receiving, setReceiving] = useState<Receiving>();
-  const variantOptions = flattenVariants(products);
 
   function newDraft(): void { setDraft({ poNumber: `PO-${Date.now()}`, vendorId: '', storeId: '', notes: '', lines: [] }); setLowStock([]); setSelectedLowStock([]); }
-  function editDraft(po: PurchaseOrderRow): void { setDraft({ id: po.id, poNumber: po.poNumber, vendorId: po.vendorId, storeId: po.storeId, notes: po.notes ?? '', lines: po.lines.map((line) => ({ variantId: line.variantId, quantity: line.orderedQuantity, unitCostMinor: line.unitCostMinor })) }); setLowStock([]); setSelectedLowStock([]); }
+  function editDraft(po: PurchaseOrderRow): void { setDraft({ id: po.id, poNumber: po.poNumber, vendorId: po.vendorId, storeId: po.storeId, notes: po.notes ?? '', lines: po.lines.map((line) => ({ variantId: line.variantId, variantLabel: `${line.productNameSnapshot} · ${line.variantNameSnapshot} · ${line.skuSnapshot}`, quantity: line.orderedQuantity, unitCostMinor: line.unitCostMinor })) }); setLowStock([]); setSelectedLowStock([]); }
   function addLine(): void { setDraft((current) => current && { ...current, lines: [...current.lines, { variantId: '', quantity: 1, unitCostMinor: '' }] }); }
   function updateLine(index: number, patch: Partial<PurchaseDraftLine>): void { setDraft((current) => current && { ...current, lines: current.lines.map((line, position) => position === index ? { ...line, ...patch } : line) }); }
   function removeLine(index: number): void { setDraft((current) => current && { ...current, lines: current.lines.filter((_, position) => position !== index) }); }
@@ -366,7 +413,7 @@ function PurchaseOrdersView({ rows, vendors, stores, products, run }: { rows: Pu
       if (!current) return current;
       const existingIds = new Set(current.lines.map((line) => line.variantId));
       const additions = lowStock.filter((row) => selectedLowStock.includes(row.variant.id) && !existingIds.has(row.variant.id))
-        .map((row) => ({ variantId: row.variant.id, quantity: Math.max(row.variant.lowStockThreshold * 2 - row.onHand, 1), unitCostMinor: '' }));
+        .map((row) => ({ variantId: row.variant.id, variantLabel: `${row.variant.product.name} · ${row.variant.name} · ${row.variant.sku}`, quantity: Math.max(row.variant.lowStockThreshold * 2 - row.onHand, 1), unitCostMinor: '' }));
       return { ...current, lines: [...current.lines, ...additions] };
     });
     setSelectedLowStock([]);
@@ -411,7 +458,7 @@ function PurchaseOrdersView({ rows, vendors, stores, products, run }: { rows: Pu
         <div className="toolbar"><p>Line items</p><button type="button" onClick={addLine}>Add line</button><button type="button" onClick={() => void loadLowStock()}>Load low-stock items</button></div>
         <table className="line-table"><thead><tr><th>Item</th><th>Quantity</th><th>Unit cost, cents</th><th/></tr></thead>
           <tbody>{draft.lines.map((line, index) => <tr key={index}>
-            <td><select value={line.variantId} onChange={(event) => updateLine(index, { variantId: event.target.value })}><option value="">Choose product</option>{variantOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></td>
+            <td><VariantPicker label={`Product / variant ${index + 1}`} value={line.variantId} selectedLabel={line.variantLabel} onChange={(variantId, variantLabel) => updateLine(index, { variantId, variantLabel })}/></td>
             <td><input type="number" min="1" value={line.quantity} onChange={(event) => updateLine(index, { quantity: Number(event.target.value) })}/></td>
             <td><input inputMode="numeric" value={line.unitCostMinor} onChange={(event) => updateLine(index, { unitCostMinor: event.target.value })}/></td>
             <td><button type="button" onClick={() => removeLine(index)}>Remove</button></td>
