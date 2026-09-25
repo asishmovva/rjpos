@@ -75,10 +75,12 @@ suite('Phase 1 Core POS with PostgreSQL', () => {
   it('posts ledger-backed opening balance and adjustment and prevents negative inventory', async () => {
     const f = await fixture({ stock: 0 });
     try {
-      await postOpeningBalance(f.prisma, { organizationId: f.organizationId, storeId: f.storeId,
+      const opened = await postOpeningBalance(f.prisma, { organizationId: f.organizationId, storeId: f.storeId,
         variantId: f.variantId, employeeId: f.employeeId, quantity: 5, reason: 'Initial count' });
-      await adjustInventory(f.prisma, { organizationId: f.organizationId, storeId: f.storeId,
+      expect(opened).toMatchObject({ level: { onHand: 5 }, movement: { type: 'INITIAL', quantityDelta: 5 } });
+      const adjusted = await adjustInventory(f.prisma, { organizationId: f.organizationId, storeId: f.storeId,
         variantId: f.variantId, employeeId: f.employeeId, quantity: -2, reason: 'Damage' });
+      expect(adjusted).toMatchObject({ level: { onHand: 3 }, movement: { type: 'ADJUSTMENT_OUT', quantityDelta: -2 } });
       await expect(adjustInventory(f.prisma, { organizationId: f.organizationId, storeId: f.storeId,
         variantId: f.variantId, employeeId: f.employeeId, quantity: -4, reason: 'Invalid' })).rejects.toThrow('INVENTORY_WOULD_BE_NEGATIVE');
       const level = await f.prisma.inventoryLevel.findFirstOrThrow({ where: { organizationId: f.organizationId, variantId: f.variantId } });

@@ -8,10 +8,16 @@ import {
 } from '../src/health.js';
 import { PrismaClient } from '@prisma/client';
 import { loadTestEnvironment } from '@rjpos/config';
+import { createRequire } from 'node:module';
 
 const testEnvironment = loadTestEnvironment();
+const require = createRequire(import.meta.url);
 
 describe('API foundation', () => {
+  it('can resolve every directly imported runtime dependency', () => {
+    expect(() => require.resolve('express')).not.toThrow();
+  });
+
   it('adds and propagates request IDs', () => {
     let nextCalled = false;
     const headers = new Map<string, string>();

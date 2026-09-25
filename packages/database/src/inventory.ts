@@ -1,4 +1,5 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { PosError } from './pos-errors.js';
 
 export type InventoryMutationInput = {
   organizationId: string;
@@ -31,18 +32,18 @@ async function requireInventoryContext(
       },
     }),
   ]);
-  if (!variant) throw new Error('INVENTORY_VARIANT_NOT_FOUND');
-  if (!employee) throw new Error('EMPLOYEE_STORE_ACCESS_DENIED');
+  if (!variant) throw new PosError('INVENTORY_VARIANT_NOT_FOUND', 404);
+  if (!employee) throw new PosError('EMPLOYEE_STORE_ACCESS_DENIED', 403);
 }
 
 export async function postOpeningBalance(
   prisma: PrismaClient,
   input: InventoryMutationInput,
-): Promise<void> {
+) {
   if (!Number.isInteger(input.quantity) || input.quantity < 0)
-    throw new Error('INVENTORY_QUANTITY_INVALID');
-  if (!input.reason.trim()) throw new Error('INVENTORY_REASON_REQUIRED');
-  await prisma.$transaction(async (tx) => {
+    throw new PosError('INVENTORY_QUANTITY_INVALID');
+  if (!input.reason.trim()) throw new PosError('INVENTORY_REASON_REQUIRED');
+  return prisma.$transaction(async (tx) => {
     await requireInventoryContext(tx, input);
     const existing = await tx.inventoryMovement.findFirst({
       where: {
@@ -52,7 +53,7 @@ export async function postOpeningBalance(
         type: 'INITIAL',
       },
     });
-    if (existing) throw new Error('OPENING_BALANCE_ALREADY_POSTED');
+    if (existing) throw new PosError('OPENING_BALANCE_ALREADY_POSTED', 409);
     const level = await tx.inventoryLevel.upsert({
       where: {
         organizationId_storeId_variantId: {
@@ -97,17 +98,18 @@ export async function postOpeningBalance(
         },
       },
     });
+    return { level, movement };
   });
 }
 
 export async function adjustInventory(
   prisma: PrismaClient,
   input: InventoryMutationInput,
-): Promise<void> {
+) {
   if (!Number.isInteger(input.quantity) || input.quantity === 0)
-    throw new Error('INVENTORY_ADJUSTMENT_INVALID');
-  if (!input.reason.trim()) throw new Error('INVENTORY_REASON_REQUIRED');
-  await prisma.$transaction(async (tx) => {
+    throw new PosError('INVENTORY_ADJUSTMENT_INVALID');
+  if (!input.reason.trim()) throw new PosError('INVENTORY_REASON_REQUIRED');
+  return prisma.$transaction(async (tx) => {
     await requireInventoryContext(tx, input);
     await tx.$queryRaw`
       SELECT id FROM "InventoryLevel"
@@ -125,9 +127,9 @@ export async function adjustInventory(
         },
       },
     });
-    if (!level) throw new Error('INVENTORY_LEVEL_NOT_FOUND');
+    if (!level) throw new PosError('INVENTORY_LEVEL_NOT_FOUND', 404);
     if (level.onHand + input.quantity < level.reserved)
-      throw new Error('INVENTORY_WOULD_BE_NEGATIVE');
+      throw new PosError('INVENTORY_WOULD_BE_NEGATIVE', 409);
     const updatedLevel = await tx.inventoryLevel.update({
       where: { id: level.id },
       data: { onHand: { increment: input.quantity } },
@@ -160,6 +162,7 @@ export async function adjustInventory(
         },
       },
     });
+    return { level: updatedLevel, movement };
   });
 }
 

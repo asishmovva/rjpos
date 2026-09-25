@@ -73,6 +73,11 @@ describe('Phase 2 back-office interactions', () => {
     ]));
   });
 
+  it('does not report a successful empty API response as a fetch failure', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, status: 204, text: async () => '' } as Response);
+    await expect(adminApi.adjustInventory({ storeId: 's1', variantId: 'v1', quantityDelta: 1, reason: 'Count correction' })).resolves.toBeUndefined();
+  });
+
   it('uses server-side order and refund lookups rather than browser-side full-history filtering', async () => {
     await Promise.all([adminApi.orders('RJP-100'), adminApi.refunds('RJP-100')]);
     const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url));

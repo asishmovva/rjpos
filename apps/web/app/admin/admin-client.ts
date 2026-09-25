@@ -38,6 +38,16 @@ export type PurchaseReceiptLine = { id: string; purchaseOrderLineId: string; del
 export type PurchaseReceiptRow = { id: string; purchaseOrderId: string; idempotencyKey: string; vendorReferenceNumber: string | null; notes: string | null; receivedAt: string; receivedBy: EmployeeRef; purchaseOrder?: PurchaseOrderRef; lines: PurchaseReceiptLine[] };
 export type PurchaseOrderDetail = { id: string; poNumber: string; status: string; notes: string | null; storeId: string; vendorId: string; vendor: Vendor; store: Store; createdBy: EmployeeRef; lines: Array<PurchaseOrderLine & { variant: VariantRef & { product: ProductRef } }>; receipts: PurchaseReceiptRow[]; totalMinor: string };
 
+type ErrorBody = { error?: { code?: string }; requestId?: string };
+
+async function responseBody<T>(response: Response): Promise<(T & ErrorBody) | undefined> {
+  if (typeof response.text === 'function') {
+    const text = await response.text();
+    return text ? JSON.parse(text) as T & ErrorBody : undefined;
+  }
+  return response.json() as Promise<T & ErrorBody>;
+}
+
 function query(values: Record<string, string | number | boolean | undefined>): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(values)) if (value !== undefined && value !== '') params.set(key, String(value));
@@ -47,16 +57,16 @@ function query(values: Record<string, string | number | boolean | undefined>): s
 
 export async function adminRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${ADMIN_API}/admin${path}`, { ...init, headers: { 'content-type': 'application/json', 'x-rjpos-role': 'OWNER', ...init?.headers } });
-  const body = await response.json() as T & { error?: { code?: string }; requestId?: string };
-  if (!response.ok) throw new Error(body.error?.code ?? `HTTP_${response.status}`);
-  return body;
+  const body = await responseBody<T>(response);
+  if (!response.ok) throw new Error(body?.error?.code ?? `HTTP_${response.status}`);
+  return body as T;
 }
 
 export async function phaseThreeRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${ADMIN_API}${path}`, { ...init, headers: { 'content-type': 'application/json', 'x-rjpos-role': 'OWNER', ...init?.headers } });
-  const body = await response.json() as T & { error?: { code?: string } };
-  if (!response.ok) throw new Error(body.error?.code ?? `HTTP_${response.status}`);
-  return body;
+  const body = await responseBody<T>(response);
+  if (!response.ok) throw new Error(body?.error?.code ?? `HTTP_${response.status}`);
+  return body as T;
 }
 
 const json = (method: 'POST' | 'PATCH', body: unknown): RequestInit => ({ method, body: JSON.stringify(body) });

@@ -46,3 +46,12 @@ No required Phase 4 tests were skipped. The fresh PostgreSQL container and isola
 - The selector regression test navigates to product page 2, searches by product name, selects the matching variant, and verifies that the selected variant ID reaches the vendor-mapping API. Both vendor mappings and PO draft lines use the same picker.
 - After the Prisma-model alignment above, migration diff no longer proposes dropping existing performance indexes or removing the four legacy `updatedAt` defaults. Remaining comparison operations are FK/index renames plus the documented redundant direct join-table FKs and equivalent partial-unique-index representation.
 - Final cleanup gates: `pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm test` (30 Turbo tasks successful; 48 database, 22 API, and 12 web tests passed), and `git diff --check` passed. The first full-suite attempt had one API readiness test fail because Redis was not running on its configured test port; after starting the isolated test Redis service, the complete suite passed.
+
+## Post-merge runtime repair verification
+
+- A clean production API start originally failed with `ERR_MODULE_NOT_FOUND: Cannot find package 'express' imported from apps/api/dist/main.js`. The API now declares its direct Express runtime dependency, and a foundation test verifies that the package resolves from the API workspace.
+- The development database was missing migration `0007_phase4_purchasing_catalog`. `pnpm --filter @rjpos/database db:deploy` applied it without rewriting migration history, and the seed imported 2,714 master-catalog products.
+- Successful opening-balance and adjustment mutations previously returned empty response bodies while the admin client unconditionally parsed JSON. Both mutations now return their inventory level and movement; the client also safely accepts an empty successful response for compatibility.
+- Inventory failures now use controlled status codes: missing variants/levels return 404, invalid input returns 400, tenant access denial returns 403, duplicate opening balances and negative-stock attempts return 409.
+- Live verification exercised master UPC lookup, Add to Store, opening balance, adjustment, and register inventory fetch. The resulting register inventory showed `onHand: 7` and `available: 7`; a repeated opening balance returned HTTP 409.
+- Final gates passed: `pnpm test` (30 Turbo tasks; 132 behavioral tests, including 48 database, 23 API, and 13 web tests), `pnpm typecheck`, `pnpm lint`, `pnpm build`, and `git diff --check`.
