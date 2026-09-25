@@ -5,6 +5,7 @@ import {
   type OnApplicationShutdown,
 } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { json, urlencoded } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { BigIntJsonInterceptor, ErrorEnvelopeFilter, RequestIdMiddleware } from './foundation.js';
 import { TenantContextService } from './tenant-context.js';
@@ -26,6 +27,7 @@ import {
 } from './health.js';
 import { BackOfficeController } from './back-office.js';
 import { PhaseThreeController } from './phase-three.js';
+import { PurchasingController } from './purchasing.js';
 
 const environment = loadEnvironment();
 const prisma = new PrismaClient({
@@ -33,7 +35,7 @@ const prisma = new PrismaClient({
 });
 
 @Module({
-  controllers: [HealthController, CorePosController, BackOfficeController, PhaseThreeController],
+  controllers: [HealthController, CorePosController, BackOfficeController, PhaseThreeController, PurchasingController],
   providers: [
     HealthService,
     TenantContextService,
@@ -54,7 +56,9 @@ class AppModule implements OnApplicationShutdown {
   }
 }
 
-const app = await NestFactory.create(AppModule);
+const app = await NestFactory.create(AppModule, { bodyParser: false });
+app.use(json({ limit: '10mb' }));
+app.use(urlencoded({ extended: true, limit: '10mb' }));
 app.enableShutdownHooks();
 app.enableVersioning();
 app.enableCors();

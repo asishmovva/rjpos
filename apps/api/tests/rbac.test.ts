@@ -59,6 +59,17 @@ describe('Phase 2 back-office authorization', () => {
     }
   });
 
+  it('grants Owner full supplier/catalog purchasing access, Manager operational purchasing, and no purchasing access to Cashier', () => {
+    expect(rolePermissions.OWNER).toEqual(expect.arrayContaining([
+      'mastercatalog:manage', 'vendor:read', 'vendor:manage', 'purchase:read', 'purchase:manage',
+    ]));
+    expect(rolePermissions.MANAGER).toEqual(expect.arrayContaining(['vendor:read', 'purchase:read', 'purchase:manage']));
+    for (const permission of ['mastercatalog:manage', 'vendor:manage']) expect(rolePermissions.MANAGER).not.toContain(permission);
+    for (const permission of ['mastercatalog:manage', 'vendor:read', 'vendor:manage', 'purchase:read', 'purchase:manage']) {
+      expect(rolePermissions.CASHIER).not.toContain(permission);
+    }
+  });
+
   it('rejects inactive employees even when a supplied role header claims Owner', async () => {
     const prisma = { employee: { findFirst: vi.fn(async () => null) } };
     const controller = new BackOfficeController(prisma as never, new TenantContextService());
