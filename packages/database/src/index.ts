@@ -78,6 +78,25 @@ export {
   type WorkforceActor,
 } from './phase-three.js';
 export {
+  addMasterProductToStore,
+  createPurchaseOrder,
+  createVendor,
+  getPurchaseOrder,
+  importMasterCatalogCsv,
+  listPurchaseOrders,
+  listReceivingHistory,
+  listVendorMappings,
+  listVendors,
+  lookupMasterProduct,
+  normalizeUpc,
+  receivePurchaseOrder,
+  saveVendorMapping,
+  searchMasterProducts,
+  transitionPurchaseOrder,
+  updateDraftPurchaseOrder,
+  updateVendor,
+} from './purchasing.js';
+export {
   findProductForOrganization,
   requireRegisterContext,
   updateProductForOrganization,

@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { PrismaClient } from '@prisma/client';
-import { loadEnvironment } from '@rjpos/config';
+import { findWorkspaceRoot, loadEnvironment } from '@rjpos/config';
+import { importMasterCatalogCsv } from '../src/purchasing.js';
 
 const environment = loadEnvironment();
 const prisma = new PrismaClient({ datasources: { db: { url: environment.DATABASE_URL } } });
@@ -48,6 +51,7 @@ async function main(): Promise<void> {
     'catalog:read', 'inventory:read', 'inventory:adjust', 'register:open',
     'register:close', 'sale:create', 'discount:apply', 'order:read',
     'order:void', 'order:refund', 'settings:write',
+    'mastercatalog:manage', 'vendor:read', 'vendor:manage', 'purchase:read', 'purchase:manage',
   ];
   const permissions = new Map<string, string>();
   for (const code of permissionCodes) {
@@ -59,7 +63,7 @@ async function main(): Promise<void> {
   }
   const roleRules: Record<string, string[]> = {
     Owner: permissionCodes,
-    Manager: permissionCodes.filter((code) => code !== 'settings:write'),
+    Manager: permissionCodes.filter((code) => code !== 'settings:write' && code !== 'vendor:manage' && code !== 'mastercatalog:manage'),
     Cashier: ['catalog:read', 'inventory:read', 'register:open', 'sale:create', 'order:read'],
   };
   const employeeByRole: Record<string, string> = {
@@ -122,7 +126,13 @@ async function main(): Promise<void> {
     if (!opening) await prisma.inventoryMovement.create({ data: { organizationId: organization.id, storeId: store.id,
       variantId: variant.id, quantityDelta: 24, type: 'INITIAL', referenceType: 'SEED', referenceId: 'PHASE_1_DEMO' } });
   }
-  console.log(`Seeded fictional organization ${organization.name}`);
+  const masterCatalogCsv = readFileSync(join(findWorkspaceRoot(), 'CategorizedItemList.csv'), 'utf8');
+  const masterCatalogSummary = await importMasterCatalogCsv(prisma, {
+    organizationId: organization.id,
+    userId: '00000000-0000-0000-0000-000000000004',
+    storeId: store.id,
+  }, masterCatalogCsv);
+  console.log(`Seeded fictional organization ${organization.name} and master catalog: ${masterCatalogSummary.added} added, ${masterCatalogSummary.updated} updated, ${masterCatalogSummary.skipped} skipped, ${masterCatalogSummary.invalid} invalid, ${masterCatalogSummary.duplicate} duplicate`);
 }
 
 main()

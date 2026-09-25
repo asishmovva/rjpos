@@ -15,6 +15,28 @@ export type Shift = { id: string; clockedInAt: string; clockedOutAt: string | nu
 export type Customer = { id: string; name: string; email: string | null; phone: string | null; notes: string | null; active: boolean; pointsBalance?: number; orders?: OrderRow[]; loyaltyTransactions?: Array<{ id: string; type: string; points: number; reason: string | null; createdAt: string }> };
 export type LoyaltyProgram = { enabled: boolean; pointsEarned: number; spendMinor: string; redeemMinorPerPoint: string } | null;
 export type GiftCardDetail = { id: string; lastFour: string; status: string; balanceMinor: string; availableMinor: string; history: Array<{ id: string; type: string; status: string; amountMinor: string; reason: string | null; createdAt: string }> };
+export type ProductRef = { id: string; name: string; brand: string | null };
+export type VariantRef = { id: string; name: string; sku: string };
+export type EmployeeRef = { id: string; firstName: string; lastName: string };
+export type MasterProduct = { id: string; upc: string; name: string; brand: string | null; size: string | null; unit: string; sizeLabel: string | null; packName: string | null; category: string | null; referenceCostMinor: string | null; referencePriceMinor: string | null; metadata: unknown };
+export type CatalogLookupResult =
+  | { status: 'IN_STORE'; upc: string; product: ProductRef; variant: VariantRef }
+  | { status: 'MASTER_ONLY'; upc: string; product: MasterProduct }
+  | { status: 'NOT_FOUND'; upc: string };
+export type MasterImportIssue = { row: number; code: string; upc?: string };
+export type MasterImportSummary = { added: number; updated: number; skipped: number; invalid: number; duplicate: number; issues: MasterImportIssue[] };
+export type AddToStoreResult =
+  | { status: 'IN_STORE'; product: ProductRef; variant: VariantRef }
+  | { status: 'ADDED'; product: ProductRef; variant: VariantRef; inventoryCreated: boolean };
+export type VendorAddress = { line1?: string; line2?: string; city?: string; state?: string; postalCode?: string; country?: string };
+export type Vendor = { id: string; name: string; contactName: string | null; email: string | null; phone: string | null; addressJson: VendorAddress | null; accountReference: string | null; notes: string | null; active: boolean; _count?: { mappings: number; purchaseOrders: number } };
+export type VendorMapping = { id: string; vendorId: string; variantId: string; vendorSku: string | null; vendorCostMinor: string; casePackQuantity: number; minimumOrderQuantity: number; preferred: boolean; active: boolean; vendor: Vendor; variant: Variant & { product: ProductRef } };
+export type PurchaseOrderLine = { id: string; variantId: string; productNameSnapshot: string; variantNameSnapshot: string; skuSnapshot: string; vendorSkuSnapshot: string | null; orderedQuantity: number; receivedQuantity: number; unitCostMinor: string };
+export type PurchaseOrderRow = { id: string; poNumber: string; status: string; notes: string | null; storeId: string; vendorId: string; vendor: Vendor; store: Store; lines: PurchaseOrderLine[]; totalMinor: string; _count?: { receipts: number } };
+export type PurchaseOrderRef = { id: string; poNumber: string; status: string; vendor: Vendor; store: Store };
+export type PurchaseReceiptLine = { id: string; purchaseOrderLineId: string; deliveredQuantity: number; damagedQuantity: number; rejectedQuantity: number; unitCostMinor: string };
+export type PurchaseReceiptRow = { id: string; purchaseOrderId: string; idempotencyKey: string; vendorReferenceNumber: string | null; notes: string | null; receivedAt: string; receivedBy: EmployeeRef; purchaseOrder?: PurchaseOrderRef; lines: PurchaseReceiptLine[] };
+export type PurchaseOrderDetail = { id: string; poNumber: string; status: string; notes: string | null; storeId: string; vendorId: string; vendor: Vendor; store: Store; createdBy: EmployeeRef; lines: Array<PurchaseOrderLine & { variant: VariantRef & { product: ProductRef } }>; receipts: PurchaseReceiptRow[]; totalMinor: string };
 
 function query(values: Record<string, string | number | boolean | undefined>): string {
   const params = new URLSearchParams();
@@ -44,7 +66,7 @@ export const adminApi = {
   categories: (search = '') => adminRequest<PageResult<Category>>(`/categories${query({ search, pageSize: 100 })}`),
   createCategory: (name: string) => adminRequest<Category>('/categories', json('POST', { name })),
   updateCategory: (id: string, body: { name?: string; active?: boolean }) => adminRequest<Category>(`/categories/${id}`, json('PATCH', body)),
-  products: (search = '', page = 1) => adminRequest<PageResult<Product>>(`/products${query({ search, page, pageSize: 25 })}`),
+  products: (search = '', page = 1, pageSize = 25) => adminRequest<PageResult<Product>>(`/products${query({ search, page, pageSize })}`),
   createProduct: (body: { categoryId: string; name: string; brand?: string; taxCategory?: string; ageRestricted?: boolean; inventoryTracked?: boolean }) => adminRequest<Product>('/products', json('POST', body)),
   updateProduct: (id: string, body: Record<string, unknown>) => adminRequest<Product>(`/products/${id}`, json('PATCH', body)),
   createVariant: (productId: string, body: { name: string; sku: string; barcode?: string; size?: string; unit?: string; costMinor?: string; lowStockThreshold?: number }) => adminRequest<Variant>(`/products/${productId}/variants`, json('POST', body)),
@@ -82,6 +104,23 @@ export const adminApi = {
   giftCard: (code: string) => phaseThreeRequest<GiftCardDetail>(`/gift-cards/lookup${query({ code })}`),
   reloadGiftCard: (body: { code: string; amountMinor: string; reason: string }) => phaseThreeRequest('/admin/gift-cards/reload', json('POST', body)),
   disableGiftCard: (id: string, reason: string) => phaseThreeRequest(`/admin/gift-cards/${id}/disable`, json('POST', { reason })),
+  masterCatalog: (search = '') => adminRequest<PageResult<MasterProduct>>(`/master-catalog${query({ search, pageSize: 100 })}`),
+  lookupUpc: (upc: string) => phaseThreeRequest<CatalogLookupResult>(`/catalog/upc/${encodeURIComponent(upc)}`),
+  importMasterCatalog: (csv: string) => adminRequest<MasterImportSummary>('/master-catalog/import', json('POST', { csv })),
+  addMasterProductToStore: (upc: string, body: { categoryId: string; sku: string; variantName?: string; storeId?: string; priceMinor?: string; costMinor?: string; inventoryTracked?: boolean; lowStockThreshold?: number }) => adminRequest<AddToStoreResult>(`/master-catalog/${encodeURIComponent(upc)}/add-to-store`, json('POST', body)),
+  vendors: (search = '', active?: boolean) => adminRequest<PageResult<Vendor>>(`/vendors${query({ search, active, pageSize: 100 })}`),
+  createVendor: (body: { name: string; contactName?: string; email?: string; phone?: string; address?: VendorAddress; accountReference?: string; notes?: string }) => adminRequest<Vendor>('/vendors', json('POST', body)),
+  updateVendor: (id: string, body: Record<string, unknown>) => adminRequest<Vendor>(`/vendors/${id}`, json('PATCH', body)),
+  vendorMappings: (vendorId = '', search = '') => adminRequest<PageResult<VendorMapping>>(`/vendor-mappings${query({ vendorId, search, pageSize: 100 })}`),
+  saveVendorMapping: (body: { id?: string; vendorId: string; variantId: string; vendorSku?: string; vendorCostMinor: string; casePackQuantity?: number; minimumOrderQuantity?: number; preferred?: boolean; active?: boolean }) => adminRequest<VendorMapping>('/vendor-mappings', json('POST', body)),
+  purchaseOrders: (search = '', status = '', storeId = '') => adminRequest<PageResult<PurchaseOrderRow>>(`/purchase-orders${query({ search, status, storeId, pageSize: 100 })}`),
+  purchaseOrder: (id: string) => adminRequest<PurchaseOrderDetail>(`/purchase-orders/${id}`),
+  createPurchaseOrder: (body: { storeId?: string; vendorId: string; poNumber: string; notes?: string; lines: Array<{ variantId: string; quantity: number; vendorProductMappingId?: string; unitCostMinor?: string }> }) => adminRequest<PurchaseOrderDetail>('/purchase-orders', json('POST', body)),
+  updatePurchaseOrder: (id: string, body: { vendorId?: string; poNumber?: string; notes?: string | null; lines?: Array<{ variantId: string; quantity: number; vendorProductMappingId?: string; unitCostMinor?: string }> }) => adminRequest<PurchaseOrderDetail>(`/purchase-orders/${id}`, json('PATCH', body)),
+  submitPurchaseOrder: (id: string) => adminRequest<{ id: string; status: string }>(`/purchase-orders/${id}/submit`, json('POST', {})),
+  cancelPurchaseOrder: (id: string) => adminRequest<{ id: string; status: string }>(`/purchase-orders/${id}/cancel`, json('POST', {})),
+  receivePurchaseOrder: (id: string, body: { idempotencyKey: string; vendorReferenceNumber?: string; notes?: string; lines: Array<{ purchaseOrderLineId: string; deliveredQuantity: number; damagedQuantity?: number; rejectedQuantity?: number; unitCostMinor?: string }> }) => adminRequest<PurchaseReceiptRow>(`/purchase-orders/${id}/receipts`, json('POST', body)),
+  receivingHistory: (purchaseOrderId = '') => adminRequest<PageResult<PurchaseReceiptRow>>(`/receiving-history${query({ purchaseOrderId, pageSize: 100 })}`),
 };
 
 export async function createCatalogFlow(input: {

@@ -80,6 +80,53 @@ describe('Phase 2 back-office interactions', () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
   });
 
+  it('searches and pages product variants when creating a vendor mapping', async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/admin/dashboard')) return response({ salesMinor: '0', transactions: 0, refundMinor: '0', openRegisters: 0, lowStockProducts: 0, asOf: new Date().toISOString() });
+      if (url.pathname.endsWith('/admin/vendors')) return response({ ...emptyPage, pageSize: 100, items: [{ id: 'vendor-1', name: 'Acme Supply', contactName: null, email: null, phone: null, addressJson: null, accountReference: null, notes: null, active: true }] });
+      if (url.pathname.endsWith('/admin/vendor-mappings')) return response(emptyPage);
+      if (url.pathname.endsWith('/admin/products') && init?.method === 'POST') return response({});
+      if (url.pathname.endsWith('/admin/products')) {
+        const page = Number(url.searchParams.get('page') ?? '1');
+        const searchTerm = url.searchParams.get('search') ?? '';
+        const product = (id: string, name: string, sku: string) => ({
+          id, name, brand: null, active: true, category: { id: 'category-1', name: 'General', active: true },
+          variants: [{ id: `variant-${id}`, name: 'Each', sku, active: true, lowStockThreshold: 0, barcodes: [] }],
+        });
+        if (searchTerm.toLocaleLowerCase() === 'oak') return response({ items: [product('oak', 'Oak Product', 'OAK-1')], page: 1, pageSize: 25, total: 1 });
+        return response({ items: [product(page === 1 ? 'first' : 'last', page === 1 ? 'First Product' : 'Last Product', `SKU-${page}`)], page, pageSize: 25, total: 26 });
+      }
+      return response(emptyPage);
+    });
+
+    const user = userEvent.setup();
+    render(<AdminPage/>);
+    await screen.findByText('Today’s sales');
+    await user.click(screen.getByRole('button', { name: 'Vendor Mappings' }));
+    await screen.findByText('No vendor mappings match this search.');
+    await user.click(screen.getByRole('button', { name: 'New mapping' }));
+    await screen.findByText('26 products · page 1 of 2');
+    await user.click(screen.getByRole('button', { name: 'Next Product / variant page' }));
+    await screen.findByText('26 products · page 2 of 2');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Product / variant' }), 'variant-last');
+    await user.type(screen.getByRole('searchbox', { name: 'Search Product / variant' }), 'Oak');
+    await screen.findByRole('option', { name: 'Oak Product · Each · OAK-1' });
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Product / variant' }), 'variant-oak');
+    await user.selectOptions(screen.getByLabelText('Vendor'), 'vendor-1');
+    await user.type(screen.getByLabelText('Vendor cost, cents'), '125');
+    await user.click(screen.getByRole('button', { name: 'Create mapping' }));
+
+    await waitFor(() => {
+      const request = vi.mocked(fetch).mock.calls.find(([input, init]) => String(input).endsWith('/admin/vendor-mappings') && init?.method === 'POST');
+      expect(request).toBeDefined();
+      expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({ variantId: 'variant-oak', vendorId: 'vendor-1', vendorCostMinor: '125' });
+    });
+    const productRequests = vi.mocked(fetch).mock.calls.map(([input]) => new URL(String(input))).filter((url) => url.pathname.endsWith('/admin/products'));
+    expect(productRequests.some((url) => url.searchParams.get('page') === '2')).toBe(true);
+    expect(productRequests.some((url) => url.searchParams.get('search') === 'Oak')).toBe(true);
+  });
+
   it('creates customers through the Phase 3 profile workflow', async () => {
     const user = userEvent.setup(); render(<AdminPage/>);
     await screen.findByText('Transactions');
