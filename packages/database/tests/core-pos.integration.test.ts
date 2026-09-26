@@ -8,6 +8,7 @@ import {
   checkoutCash,
   checkoutTerminal,
   closeRegisterSession,
+  getActiveRegisterSession,
   getReceipt,
   lookupCatalog,
   openRegisterSession,
@@ -89,11 +90,24 @@ suite('Phase 1 Core POS with PostgreSQL', () => {
     } finally { await f.prisma.$disconnect(); }
   });
 
-  it('enforces register session transitions and database-level duplicate-open protection', async () => {
+  it('resumes an active register session without duplicating audit or outbox records', async () => {
+    const f = await fixture();
+    try {
+      const first = await open(f);
+      const resumed = await open(f);
+      expect(resumed.id).toBe(first.id);
+      expect((await getActiveRegisterSession(f.prisma, f))?.id).toBe(first.id);
+      expect(await f.prisma.registerSession.count({ where: { organizationId: f.organizationId, registerId: f.registerId } })).toBe(1);
+      expect(await f.prisma.auditRecord.count({ where: { organizationId: f.organizationId, action: 'REGISTER_OPENED', entityId: first.id } })).toBe(1);
+      expect(await f.prisma.outboxEvent.count({ where: { organizationId: f.organizationId, eventType: 'REGISTER_OPENED', aggregateId: first.id } })).toBe(1);
+    } finally { await f.prisma.$disconnect(); }
+  });
+
+  it('enforces register session transitions while safely resuming duplicate opens', async () => {
     const f = await fixture();
     try {
       const session = await open(f);
-      await expect(open(f)).rejects.toThrow();
+      expect((await open(f)).id).toBe(session.id);
       const closed = await closeRegisterSession(f.prisma, { organizationId: f.organizationId, storeId: f.storeId,
         registerId: f.registerId, sessionId: session.id, employeeId: f.employeeId, countedCashMinor: 5001n });
       expect(closed).toMatchObject({ status: 'CLOSED', expectedCashMinor: 5000n, differenceMinor: 1n });
