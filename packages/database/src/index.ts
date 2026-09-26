@@ -15,7 +15,11 @@ export {
   getInventorySnapshot,
   postOpeningBalance,
 } from './inventory.js';
-export { closeRegisterSession, openRegisterSession } from './register-sessions.js';
+export {
+  closeRegisterSession,
+  getActiveRegisterSession,
+  openRegisterSession,
+} from './register-sessions.js';
 export {
   checkoutCash,
   checkoutMixed,

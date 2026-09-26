@@ -20,6 +20,7 @@ import {
   checkoutTerminal,
   closeRegisterSession,
   getInventorySnapshot,
+  getActiveRegisterSession,
   getReceipt,
   lookupCatalog,
   openRegisterSession,
@@ -124,6 +125,16 @@ export class CorePosController {
     const context = this.context(request, 'register:open');
     return openRegisterSession(this.prisma, { organizationId: context.organizationId, storeId: context.storeId,
       registerId: context.registerId, employeeId: context.userId, openingCashMinor: parseMoneyApi(body.openingCashMinor) });
+  }
+
+  @Get('register-sessions/current')
+  currentRegisterSession(@Req() request: TenantRequest) {
+    const context = this.context(request, 'register:open');
+    return getActiveRegisterSession(this.prisma, {
+      organizationId: context.organizationId,
+      storeId: context.storeId,
+      registerId: context.registerId,
+    });
   }
 
   @Post('register-sessions/:sessionId/close')

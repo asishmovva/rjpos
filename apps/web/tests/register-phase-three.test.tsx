@@ -14,6 +14,8 @@ describe('Phase 3 register workflow', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith('/workforce/current')) return response({ id: 'shift-1', clockedOutAt: null });
+      if (url.endsWith('/register-sessions/current')) return response(null);
+      if (url.endsWith('/store/current')) return response({ taxRateBasisPoints: 0 });
       if (url.endsWith('/workforce/clock-out') && init?.method === 'POST') return response({ id: 'shift-1', clockedOutAt: new Date().toISOString() });
       return response({});
     }));
@@ -30,6 +32,7 @@ describe('Phase 3 register workflow', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith('/workforce/current')) return response(null);
+      if (url.endsWith('/register-sessions/current')) return response(null);
       if (url.endsWith('/register-sessions/open') && init?.method === 'POST') return response({ id: 'session-1' });
       if (url.endsWith('/store/current')) return response({ taxRateBasisPoints: 0 });
       if (url.includes('/catalog/lookup?barcode=')) return response([{ variantId: 'variant-1', productName: 'Item', variantName: 'Each', sku: 'SKU1', barcode: '123', priceMinor: '1000', active: true, ageRestricted: false }]);
@@ -49,5 +52,19 @@ describe('Phase 3 register workflow', () => {
 
     await waitFor(() => expect(mixedBody).toBeDefined());
     expect(mixedBody?.remainder).toEqual({ kind: 'CASH', tenderedMinor: '0' });
+  });
+
+  it('restores an existing open register session after a renderer reload', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/workforce/current')) return response(null);
+      if (url.endsWith('/register-sessions/current')) return response({ id: 'session-existing', status: 'OPEN' });
+      if (url.endsWith('/store/current')) return response({ taxRateBasisPoints: 700 });
+      return response([]);
+    }));
+
+    render(<Register />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close register' })).toBeTruthy());
+    expect(screen.getByText('Existing register session restored. Ready to sell.')).toBeTruthy();
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_RENDERER_URL,
+  DEFAULT_RENDERER_STARTUP_ATTEMPTS,
   resolveDevelopmentRendererUrl,
   resolveRendererTarget,
   waitForRenderer,
@@ -27,6 +28,25 @@ describe('Electron security boundary', () => {
 
   it('uses a sensible local renderer fallback', () => {
     expect(resolveDevelopmentRendererUrl({})).toBe(`${DEFAULT_RENDERER_URL}/`);
+    expect(DEFAULT_RENDERER_STARTUP_ATTEMPTS).toBe(120);
+  });
+
+  it('loads the renderer when the concurrently-starting web server becomes ready', async () => {
+    const fetcher = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('connection refused'))
+      .mockRejectedValueOnce(new Error('connection refused'))
+      .mockResolvedValueOnce(new Response(null, { status: 200 })) as unknown as typeof fetch;
+
+    await expect(
+      waitForRenderer('http://localhost:3000', {
+        attempts: 3,
+        intervalMilliseconds: 0,
+        requestTimeoutMilliseconds: 10,
+        fetcher,
+      }),
+    ).resolves.toBeUndefined();
+    expect(fetcher).toHaveBeenCalledTimes(3);
   });
 
   it('loads a packaged renderer file in production', () => {

@@ -3,6 +3,9 @@ import { dirname, join, resolve } from 'node:path';
 import { parse } from 'dotenv';
 
 export const DEFAULT_RENDERER_URL = 'http://localhost:3000';
+export const DEFAULT_RENDERER_STARTUP_ATTEMPTS = 120;
+export const DEFAULT_RENDERER_RETRY_INTERVAL_MILLISECONDS = 500;
+export const DEFAULT_RENDERER_REQUEST_TIMEOUT_MILLISECONDS = 2_000;
 
 export type RegisterEnvironment = Record<string, string | undefined>;
 export type RendererTarget =
@@ -63,10 +66,13 @@ export async function waitForRenderer(
     fetcher?: typeof fetch;
   } = {},
 ): Promise<void> {
-  const attempts = options.attempts ?? 20;
-  const intervalMilliseconds = options.intervalMilliseconds ?? 500;
+  const attempts = options.attempts ?? DEFAULT_RENDERER_STARTUP_ATTEMPTS;
+  const intervalMilliseconds =
+    options.intervalMilliseconds ??
+    DEFAULT_RENDERER_RETRY_INTERVAL_MILLISECONDS;
   const requestTimeoutMilliseconds =
-    options.requestTimeoutMilliseconds ?? 1_000;
+    options.requestTimeoutMilliseconds ??
+    DEFAULT_RENDERER_REQUEST_TIMEOUT_MILLISECONDS;
   const fetcher = options.fetcher ?? fetch;
   let lastFailure = 'no response';
 

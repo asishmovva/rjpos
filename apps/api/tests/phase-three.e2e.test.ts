@@ -33,6 +33,8 @@ describe('Phase 3 API + PostgreSQL retention E2E', () => {
       await phase3.setLoyaltyProgram(request, { enabled: true, pointsEarned: 1, spendMinor: '100', redeemMinorPerPoint: '10' });
       const card = await phase3.addGiftCard(request, { amountMinor: '500', reason: 'E2E issue' });
       const registerSession = await pos.open(request, { openingCashMinor: '0' });
+      expect((await pos.currentRegisterSession(request))?.id).toBe(registerSession.id);
+      expect((await pos.open(request, { openingCashMinor: '0' })).id).toBe(registerSession.id);
       await pos.cash(request, { registerSessionId: registerSession.id, idempotencyKey: randomUUID(), customerId: customer.id,
         lines: [{ variantId, quantity: 1 }], tenderedMinor: '1000' });
       expect((await phase3.customer(request, customer.id)).pointsBalance).toBe(10);

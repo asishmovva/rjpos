@@ -27,7 +27,8 @@ describe('Phase 2 API + PostgreSQL administrative E2E', () => {
       const product = await admin.addProduct(request, { categoryId: category.id, name: 'API Vodka', ageRestricted: true, inventoryTracked: true });
       const variant = await admin.addVariant(request, product.id, { name: '750 ml', sku: `API-${product.id.slice(0, 8)}`, barcode: `APIUPC${product.id.replaceAll('-', '').slice(0, 12)}`, lowStockThreshold: 2 });
       await admin.addPrice(request, { variantId: variant.id, storeId, amountMinor: '1599', effectiveFrom: new Date(Date.now() - 1000).toISOString() });
-      await admin.openingBalance(request, { storeId, variantId: variant.id, quantity: 8, reason: 'API E2E opening count' });
+      const opening = await admin.openingBalance(request, { storeId, variantId: variant.id, quantity: 8, reason: 'API E2E opening count' });
+      expect(opening).toMatchObject({ level: { onHand: 8 }, movement: { type: 'INITIAL', quantityDelta: 8 } });
       expect((await pos.lookup(request, variant.barcodes[0]?.barcodeValue))[0]).toMatchObject({ variantId: variant.id, priceMinor: '1599' });
       const session = await pos.open(request, { openingCashMinor: '0' });
       const sale = await pos.cash(request, { registerSessionId: session.id, idempotencyKey: randomUUID(), lines: [{ variantId: variant.id, quantity: 1 }], ageVerified: true, tenderedMinor: '2000' });

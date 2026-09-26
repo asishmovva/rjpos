@@ -1,4 +1,24 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { PosError } from './pos-errors.js';
+
+export async function getActiveRegisterSession(
+  prisma: PrismaClient,
+  input: {
+    organizationId: string;
+    storeId: string;
+    registerId: string;
+  },
+) {
+  return prisma.registerSession.findFirst({
+    where: {
+      organizationId: input.organizationId,
+      storeId: input.storeId,
+      registerId: input.registerId,
+      status: { in: ['OPEN', 'CLOSING'] },
+    },
+    orderBy: { openedAt: 'desc' },
+  });
+}
 
 async function requireRegisterEmployee(
   tx: Prisma.TransactionClient,
@@ -60,6 +80,18 @@ export async function openRegisterSession(
       FOR UPDATE
     `;
     await requireRegisterEmployee(tx, input);
+    const activeSession = await tx.registerSession.findFirst({
+      where: {
+        organizationId: input.organizationId,
+        storeId: input.storeId,
+        registerId: input.registerId,
+        status: { in: ['OPEN', 'CLOSING'] },
+      },
+      orderBy: { openedAt: 'desc' },
+    });
+    if (activeSession?.status === 'CLOSING')
+      throw new PosError('REGISTER_SESSION_CLOSING', 409);
+    if (activeSession) return activeSession;
     const session = await tx.registerSession.create({ data: input });
     await Promise.all([
       tx.auditRecord.create({

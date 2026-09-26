@@ -43,7 +43,7 @@ export default function Register(): React.ReactNode {
   const projectedTax=(subtotal*BigInt(taxRate)+5000n)/10000n;
   const total=subtotal+projectedTax;
 
-  useEffect(()=>{void(async()=>{try{const shift=await api<{clockedOutAt:string|null}|null>('/workforce/current');setClockedIn(Boolean(shift&&shift.clockedOutAt===null));}catch{setClockedIn(false);}})();},[]);
+  useEffect(()=>{void(async()=>{const [shiftResult,sessionResult,storeResult]=await Promise.allSettled([api<{clockedOutAt:string|null}|null>('/workforce/current'),api<{id:string;status:'OPEN'|'CLOSING'}|null>('/register-sessions/current'),api<{taxRateBasisPoints:number}>('/store/current')]);if(shiftResult.status==='fulfilled')setClockedIn(Boolean(shiftResult.value&&shiftResult.value.clockedOutAt===null));if(sessionResult.status==='fulfilled'&&sessionResult.value?.status==='OPEN'){setSessionId(sessionResult.value.id);setMessage('Existing register session restored. Ready to sell.');}if(storeResult.status==='fulfilled')setTaxRate(storeResult.value.taxRateBasisPoints);})()},[]);
 
   const addItem=useCallback((item:CatalogItem)=>{
     if(!item.active){setMessage('This product is inactive and cannot be sold.');return;}
