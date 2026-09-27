@@ -6,6 +6,101 @@ export {
 } from './inventory-reservations.js';
 export { recordAudit } from './audit.js';
 export {
+  lookupCatalog,
+  type CatalogLookupInput,
+  type CatalogLookupResult,
+} from './catalog.js';
+export {
+  adjustInventory,
+  getInventorySnapshot,
+  postOpeningBalance,
+} from './inventory.js';
+export {
+  closeRegisterSession,
+  getActiveRegisterSession,
+  openRegisterSession,
+} from './register-sessions.js';
+export {
+  checkoutCash,
+  checkoutMixed,
+  checkoutTerminal,
+  finalizeTerminalAttempt,
+  type CheckoutContext,
+  type CheckoutLine,
+  type CheckoutResult,
+  type MixedTender,
+} from './checkout.js';
+export { PosError } from './pos-errors.js';
+export { getReceipt, refundOrder, searchOrders, voidOrder } from './orders.js';
+export {
+  createCategory,
+  createEmployee,
+  createProduct,
+  createRegister,
+  createStore,
+  createVariant,
+  getDashboard,
+  getOrderAdmin,
+  getProduct,
+  listAuditRecords,
+  listCategories,
+  listEmployees,
+  listInventoryAdmin,
+  listInventoryMovements,
+  listOrdersAdmin,
+  listPriceHistory,
+  listProducts,
+  listRefunds,
+  listRegisters,
+  listStores,
+  schedulePrice,
+  updateCategory,
+  updateEmployee,
+  updateProduct,
+  updateRegister,
+  updateStore,
+  updateVariant,
+  type AdminActor,
+} from './back-office.js';
+export {
+  adjustLoyalty,
+  clockIn,
+  clockOut,
+  configureLoyalty,
+  correctShift,
+  createCustomer,
+  disableGiftCard,
+  getCurrentShift,
+  getCustomerDetail,
+  getLoyaltyProgram,
+  issueGiftCard,
+  listCustomers,
+  listShifts,
+  lookupGiftCard,
+  reloadGiftCard,
+  updateCustomer,
+  type WorkforceActor,
+} from './phase-three.js';
+export {
+  addMasterProductToStore,
+  createPurchaseOrder,
+  createVendor,
+  getPurchaseOrder,
+  importMasterCatalogCsv,
+  listPurchaseOrders,
+  listReceivingHistory,
+  listVendorMappings,
+  listVendors,
+  lookupMasterProduct,
+  normalizeUpc,
+  receivePurchaseOrder,
+  saveVendorMapping,
+  searchMasterProducts,
+  transitionPurchaseOrder,
+  updateDraftPurchaseOrder,
+  updateVendor,
+} from './purchasing.js';
+export {
   findProductForOrganization,
   requireRegisterContext,
   updateProductForOrganization,

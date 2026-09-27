@@ -16,9 +16,10 @@ suite('outbox processing', () => {
     const prisma = new PrismaClient({ datasources: { db: { url } } });
     const organizationId = '00000000-0000-0000-0000-000000000001';
     try {
-      await prisma.outboxEvent.deleteMany({
-        where: { organizationId, aggregateId: 'outbox-test' },
-      });
+      // This suite owns the outbox in the dedicated test database. Clearing it
+      // prevents events emitted by earlier integration suites from changing
+      // the batch-level claim assertions below.
+      await prisma.outboxEvent.deleteMany();
       const event = await prisma.outboxEvent.create({
         data: {
           organizationId,

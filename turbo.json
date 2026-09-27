@@ -19,10 +19,14 @@
       "cache": false,
       "persistent": true
     },
-    "lint": {},
-    "typecheck": {
-      "dependsOn": ["^typecheck"]
+    "lint": {
+      "dependsOn": ["build"]
     },
-    "test": {}
+    "typecheck": {
+      "dependsOn": ["build"]
+    },
+    "test": {
+      "dependsOn": ["build", "^test"]
+    }
   }
 }

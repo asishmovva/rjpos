@@ -1,6 +1,6 @@
 # RJ POS
 
-RJ POS is a multi-tenant retail point-of-sale platform. Phase 0 establishes the Next.js web application, secure Electron register shell, NestJS API, worker, PostgreSQL, Redis, and shared contracts.
+RJ POS is a multi-tenant retail point-of-sale platform. Phase 0 established the runtime foundation; Phases 1–3 add the complete register and back-office workflows plus workforce, customer, loyalty, gift-card, and split-tender operations while retaining the NestJS API, secure Electron boundary, worker, PostgreSQL, Redis, and shared contracts.
 
 ## Local development
 
@@ -22,9 +22,35 @@ pnpm --filter "@rjpos/web" dev
 pnpm --filter "@rjpos/register" dev
 ```
 
-The web application listens explicitly on port 3000. During development, Electron loads `RJPOS_RENDERER_URL` from the repository-root `.env`, falling back to `http://localhost:3000`. It performs a bounded availability check before loading the URL; if the web server remains unavailable, Electron shows a visible error page and logs the failure without entering an automatic reload loop. A packaged Electron application loads its copied local `renderer.html` instead. Renderer code remains sandboxed behind the preload bridge and `hardware:status` IPC; it does not access Prisma or PostgreSQL directly.
+The web application listens explicitly on port 3000. During development, Electron loads `RJPOS_RENDERER_URL` from the repository-root `.env`, falling back to `http://localhost:3000`. It allows up to 60 seconds for a concurrently-starting Next.js server to become reachable before showing a visible error page; it never enters an automatic reload loop. If the bounded startup window expires but the web server later becomes reachable, restart only the register with `pnpm --filter "@rjpos/register" dev`. A packaged Electron application loads its copied local `renderer.html` instead. Renderer code remains sandboxed behind the preload bridge and `hardware:status` IPC; it does not access Prisma or PostgreSQL directly.
 
-Payment provider credentials and certified hardware are intentionally not required for Phase 0. Payment contracts remain provider-neutral for later implementation.
+Payment provider credentials and certified hardware are intentionally not required for Phase 0. The first payment implementation is the simulated terminal contract.
+
+## Phase 1 Core POS
+
+After migrations and seed complete, start `pnpm dev`, open the register, and scan one of the fictional Tito's UPCs (`619947000013`, `619947000020`, `619947000037`, or `619947000044`). The development identity defaults to the seeded Owner, Downtown store, and Register 01. The UI talks only to `NEXT_PUBLIC_RJPOS_API_URL`; Electron remains a secure host for the same Next.js application.
+
+The API is authoritative for current prices, tax, discounts, stock, register state, and payment state. Cash sales complete atomically. The simulated terminal supports approved, declined, cancelled, timeout, unknown, lost-network, duplicate-callback, and late-callback scenarios. Unknown financial outcomes remain pending reconciliation and are never automatically retried.
+
+Core endpoints live below `/api/v1`: catalog lookup, inventory, current store configuration, register sessions, cash/terminal checkout, order history/receipts, voids, and refunds. Development role behavior can be exercised with `x-rjpos-role: OWNER`, `MANAGER`, or `CASHIER`; sensitive operations are enforced by the API.
+
+No external account, payment credential, hardware SDK, or machine-level tool is needed for Phase 1. PostgreSQL remains authoritative; the project does not introduce a second local/offline source of truth. Real processors, certified terminals, scanners, printers, and drawers remain future integrations behind their existing boundaries.
+
+## Phase 2 Back Office
+
+After deploying migration `0004_phase2_back_office`, open `http://localhost:3000/admin`. Owner and Manager users can administer the catalog, variants, effective-dated store prices, ledger-backed inventory, employees, registers, orders/refunds, and audit history. Owner-only operations cover store lifecycle and settings. Cashiers do not receive admin API permissions.
+
+The New product workflow can create a category, product, variant/SKU/UPC, current store price, low-stock threshold, and opening inventory in one guided operation. Each step calls an explicit `/api/v1/admin` operation; the browser never talks to Prisma or PostgreSQL. Return to `/` (or the secure Electron host), scan the new UPC, sell it, and use the admin Orders and Inventory areas to verify the authoritative result.
+
+Manual inventory changes require a signed integer delta and reason and always create ledger/audit records. Price changes append effective-dated rows and retain history. Products, variants, categories, employees, stores, and registers use active/inactive lifecycle states; active register sessions prevent unsafe register/store changes.
+
+## Phase 3 Workforce and Customer Value
+
+The register now supports employee clock in/out, optional customer attachment, projected and redeemed loyalty points, internal gift-card redemption, and gift-card plus cash or simulated-terminal split tender. Walk-in checkout remains supported. The back office adds shift history/corrections, customer profiles and purchase history, loyalty configuration/manual adjustments, and gift-card issue, reload, lookup, history, and disable operations.
+
+Loyalty and gift-card balances are derived from immutable transaction ledgers. Checkout, void, and refund operations create compensating entries; they do not rewrite economic history. Customer, shift, and card access remains tenant-scoped, sensitive management operations require Owner or Manager permissions, and concurrent balance use is serialized in PostgreSQL. Gift-card codes are generated from cryptographically secure random bytes and stored only as hashes; the plaintext code is returned only when issued.
+
+Phase 3 remains internal-only: it does not add payroll, scheduling, marketing campaigns, loyalty tiers, network gift cards, or real payment terminals.
 
 ## Integration-test setup
 

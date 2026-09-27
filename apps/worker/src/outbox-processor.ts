@@ -25,7 +25,8 @@ export async function claimOutboxBatch(
     >`
       SELECT "id", "eventType", "aggregateType", "aggregateId", "payload"
       FROM "OutboxEvent"
-      WHERE "status" = 'PENDING' AND "availableAt" <= NOW()
+      WHERE "status" = 'PENDING'
+        AND "availableAt" <= (NOW() AT TIME ZONE 'UTC')
       ORDER BY "createdAt"
       FOR UPDATE SKIP LOCKED
       LIMIT ${limit}

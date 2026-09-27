@@ -3,11 +3,19 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "prisma generate && tsc -p tsconfig.json",
     "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --no-file-parallelism",
     "test:prepare": "tsx scripts/prepare-test-database.ts",
     "db:deploy": "tsx scripts/deploy-development-database.ts",
     "db:seed": "tsx prisma/seed.ts",
@@ -15,7 +23,9 @@
   },
   "dependencies": {
     "@prisma/client": "^6.16.2",
-    "@rjpos/config": "workspace:*"
+    "@rjpos/config": "workspace:*",
+    "@rjpos/domain-types": "workspace:*",
+    "@rjpos/payment-contracts": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",

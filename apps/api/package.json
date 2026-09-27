@@ -9,7 +9,7 @@
     "dev": "tsx watch src/main.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --no-file-parallelism"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.6",
@@ -18,7 +18,10 @@
     "@prisma/client": "^6.16.2",
     "@rjpos/config": "workspace:*",
     "@rjpos/database": "workspace:*",
+    "@rjpos/domain-types": "workspace:*",
     "@rjpos/logging": "workspace:*",
+    "@rjpos/payment-contracts": "workspace:*",
+    "express": "^5.2.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"
   },
