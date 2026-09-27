@@ -25,6 +25,7 @@ export {
   checkoutMixed,
   checkoutTerminal,
   finalizeTerminalAttempt,
+  quoteCheckout,
   type CheckoutContext,
   type CheckoutLine,
   type CheckoutResult,
@@ -100,6 +101,24 @@ export {
   updateDraftPurchaseOrder,
   updateVendor,
 } from './purchasing.js';
+export {
+  cancelTransfer,
+  createPromotion,
+  createStockCount,
+  createTransfer,
+  finalizeStockCount,
+  listPromotions,
+  listStockCounts,
+  listTransfers,
+  receiveTransfer,
+  replenishmentSuggestions,
+  reviewStockCount,
+  shipTransfer,
+  submitTransfer,
+  updateInventoryPolicy,
+  updatePromotion,
+  type PromotionInput,
+} from './phase-five.js';
 export {
   findProductForOrganization,
   requireRegisterContext,

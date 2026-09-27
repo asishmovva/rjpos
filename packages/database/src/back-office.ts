@@ -336,17 +336,18 @@ export async function listInventoryAdmin(prisma: PrismaClient, actor: AdminActor
     ] } } : {}) };
   const rows = await prisma.inventoryLevel.findMany({ where, include: { store: { select: { id: true, name: true } },
     variant: { include: { product: true, barcodes: true } } }, orderBy: [{ store: { name: 'asc' } }, { variant: { sku: 'asc' } }] });
-  const filtered = input.lowStock ? rows.filter((row) => row.onHand - row.reserved <= row.variant.lowStockThreshold) : rows;
+  const filtered = input.lowStock ? rows.filter((row) => row.onHand - row.reserved <= row.lowStockThreshold) : rows;
   return { items: filtered.slice(skip, skip + pageSize).map((row) => ({ ...row, available: row.onHand - row.reserved,
-    inventoryStatus: row.onHand - row.reserved <= row.variant.lowStockThreshold ? 'LOW_STOCK' : 'IN_STOCK' })), page, pageSize, total: filtered.length };
+    inventoryStatus: row.onHand - row.reserved <= row.lowStockThreshold ? 'LOW_STOCK' : 'IN_STOCK' })), page, pageSize, total: filtered.length };
 }
 
 export async function listInventoryMovements(prisma: PrismaClient, actor: AdminActor, input: PageInput & {
-  storeId?: string | undefined; variantId?: string | undefined; type?: Prisma.EnumInventoryMovementTypeFilter['equals']; employeeId?: string | undefined; from?: Date | undefined; to?: Date | undefined;
+  storeId?: string | undefined; productId?: string | undefined; variantId?: string | undefined; type?: Prisma.EnumInventoryMovementTypeFilter['equals']; employeeId?: string | undefined; from?: Date | undefined; to?: Date | undefined;
 }) {
   const { page, pageSize, skip } = pageArgs(input);
   const where: Prisma.InventoryMovementWhereInput = { organizationId: actor.organizationId,
     ...(input.storeId ? { storeId: input.storeId } : {}), ...(input.variantId ? { variantId: input.variantId } : {}),
+    ...(input.productId ? { variant: { productId: input.productId } } : {}),
     ...(input.type ? { type: input.type } : {}), ...(input.employeeId ? { employeeId: input.employeeId } : {}),
     ...(input.from || input.to ? { createdAt: { ...(input.from ? { gte: input.from } : {}), ...(input.to ? { lte: input.to } : {}) } } : {}) };
   const [items, total] = await Promise.all([

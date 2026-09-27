@@ -136,7 +136,7 @@ export class BackOfficeController {
   @Get('inventory/movements')
   async movements(@Req() request: TenantRequest, @Query() query: Record<string, string>) {
     return listInventoryMovements(this.prisma, await this.actor(request, 'inventory:read'), { page: number(query.page), pageSize: number(query.pageSize), storeId: query.storeId,
-      variantId: query.variantId, type: query.type as Parameters<typeof listInventoryMovements>[2]['type'], employeeId: query.employeeId, from: date(query.from), to: date(query.to) });
+      productId: query.productId, variantId: query.variantId, type: query.type as Parameters<typeof listInventoryMovements>[2]['type'], employeeId: query.employeeId, from: date(query.from), to: date(query.to) });
   }
 
   @Post('inventory/opening-balance')
