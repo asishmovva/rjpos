@@ -11,6 +11,7 @@ import type {
 } from '@rjpos/payment-contracts';
 import { PosError, requirePositiveQuantity } from './pos-errors.js';
 import { findGiftCardByCode, giftCardBalance, loyaltyBalance } from './phase-three.js';
+import { resolveAutomaticPromotions } from './phase-five.js';
 
 export type CheckoutLine = {
   variantId: string;
@@ -69,6 +70,60 @@ function assertCheckoutInput(input: CheckoutContext): void {
     if (seen.has(line.variantId)) throw new PosError('DUPLICATE_CART_VARIANT');
     seen.add(line.variantId);
   }
+}
+
+export async function quoteCheckout(
+  prisma: PrismaClient,
+  input: { organizationId: string; storeId: string; lines: Array<{ variantId: string; quantity: number }> },
+) {
+  if (!input.lines.length) throw new PosError('CART_EMPTY');
+  const ids = new Set<string>();
+  for (const line of input.lines) {
+    requirePositiveQuantity(line.quantity);
+    if (ids.has(line.variantId)) throw new PosError('DUPLICATE_CART_VARIANT');
+    ids.add(line.variantId);
+  }
+  return prisma.$transaction(async (tx) => {
+    const [store, variants] = await Promise.all([
+      tx.store.findFirst({ where: { id: input.storeId, organizationId: input.organizationId } }),
+      tx.productVariant.findMany({
+        where: { organizationId: input.organizationId, id: { in: [...ids] } },
+        include: { product: true, prices: {
+          where: { effectiveFrom: { lte: new Date() }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: new Date() } }],
+            AND: [{ OR: [{ storeId: input.storeId }, { storeId: null }] }] },
+          orderBy: { effectiveFrom: 'desc' },
+        } },
+      }),
+    ]);
+    if (!store) throw new PosError('STORE_NOT_FOUND', 404);
+    if (variants.length !== ids.size) throw new PosError('PRODUCT_VARIANT_NOT_FOUND', 404);
+    const byId = new Map(variants.map((variant) => [variant.id, variant]));
+    const authoritative = input.lines.map((line) => {
+      const variant = byId.get(line.variantId);
+      if (!variant) throw new PosError('PRODUCT_VARIANT_NOT_FOUND', 404);
+      if (!variant.active || !variant.product.active) throw new PosError('PRODUCT_INACTIVE', 409);
+      const price = variant.prices.find((candidate) => candidate.storeId === input.storeId)
+        ?? variant.prices.find((candidate) => candidate.storeId === null);
+      if (!price) throw new PosError('PRICE_NOT_FOUND', 409);
+      return { line, variant, price };
+    });
+    const now = new Date();
+    const promotions = await resolveAutomaticPromotions(tx, { organizationId: input.organizationId, storeId: input.storeId, now,
+      lines: authoritative.map(({ line, variant, price }) => ({ variant, quantity: line.quantity, unitPriceMinor: price.amountMinor })) });
+    const totals = calculateCartTotals({ taxRateBasisPoints: store.taxRateBasisPoints, lines: authoritative.map(({ line, variant, price }) => ({
+      variantId: variant.id, quantity: line.quantity, unitPriceMinor: price.amountMinor,
+      taxable: variant.product.taxCategory !== 'EXEMPT',
+      ...(promotions.has(variant.id) ? { discount: promotions.get(variant.id)!.discount } : {}),
+    })) });
+    return {
+      subtotalMinor: totals.subtotalMinor.toString(), discountMinor: totals.discountMinor.toString(),
+      taxMinor: totals.taxMinor.toString(), totalMinor: totals.totalMinor.toString(),
+      lines: totals.lines.map((line) => ({ variantId: line.variantId, unitPriceMinor: line.unitPriceMinor.toString(),
+        quantity: line.quantity, subtotalMinor: line.subtotalMinor.toString(), discountMinor: line.discountMinor.toString(),
+        taxMinor: line.taxMinor.toString(), totalMinor: line.totalMinor.toString(),
+        promotionName: promotions.get(line.variantId)?.promotionName ?? null })),
+    };
+  });
 }
 
 async function acquireIdempotency(
@@ -191,13 +246,19 @@ async function prepareOrder(tx: Tx, input: CheckoutContext) {
   if (requiresAgeVerification && !input.ageVerified) {
     throw new PosError('AGE_VERIFICATION_REQUIRED', 409);
   }
+  const promotions = await resolveAutomaticPromotions(tx, {
+    organizationId: input.organizationId,
+    storeId: input.storeId,
+    now,
+    lines: authoritative.map(({ line, variant, price }) => ({ variant, quantity: line.quantity, unitPriceMinor: price.amountMinor })),
+  });
   const totals = calculateCartTotals({
     lines: authoritative.map(({ line, variant, price }) => ({
       variantId: variant.id,
       quantity: line.quantity,
       unitPriceMinor: price.amountMinor,
       taxable: variant.product.taxCategory !== 'EXEMPT',
-      ...(line.discount ? { discount: line.discount } : {}),
+      ...(line.discount ? { discount: line.discount } : promotions.has(variant.id) ? { discount: promotions.get(variant.id)!.discount } : {}),
     })),
     taxRateBasisPoints: store.taxRateBasisPoints,
     ...(input.orderDiscount ? { orderDiscount: input.orderDiscount } : {}),
@@ -236,6 +297,10 @@ async function prepareOrder(tx: Tx, input: CheckoutContext) {
         totalMinor: line.totalMinor,
         currency: source.price.currency,
         taxCategorySnapshot: source.variant.product.taxCategory,
+        ...(promotions.has(line.variantId) && !source.line.discount ? {
+          promotionId: promotions.get(line.variantId)!.promotionId,
+          promotionNameSnapshot: promotions.get(line.variantId)!.promotionName,
+        } : {}),
       };
     }) });
 
@@ -273,7 +338,7 @@ async function prepareOrder(tx: Tx, input: CheckoutContext) {
       }}, data: { reserved: { increment: line.quantity } } });
     }
   }
-  return { order, totals, reservationId, requiresAgeVerification };
+  return { order, totals, reservationId, requiresAgeVerification, promotions };
 }
 
 async function convertReservationInTransaction(tx: Tx, organizationId: string, reservationId: string | undefined, employeeId: string): Promise<void> {

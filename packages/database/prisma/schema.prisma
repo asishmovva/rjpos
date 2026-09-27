@@ -124,6 +124,33 @@ enum PurchaseOrderStatus {
   CANCELLED
 }
 
+enum InventoryTransferStatus {
+  DRAFT
+  SUBMITTED
+  IN_TRANSIT
+  RECEIVED
+  CANCELLED
+}
+
+enum StockCountStatus {
+  DRAFT
+  REVIEWED
+  FINALIZED
+  CANCELLED
+}
+
+enum PromotionType {
+  PERCENTAGE
+  FIXED
+  MULTIBUY
+}
+
+enum PromotionScope {
+  VARIANT
+  PRODUCT
+  CATEGORY
+}
+
 enum PaymentStatus {
   CREATED
   PROCESSING
@@ -178,50 +205,57 @@ enum OutboxStatus {
 }
 
 model Organization {
-  id                    String                     @id @default(uuid()) @db.Uuid
-  name                  String
-  createdAt             DateTime                   @default(now())
-  updatedAt             DateTime                   @updatedAt
-  stores                Store[]
-  employees             Employee[]
-  employeeShifts        EmployeeShift[]
-  employeeStores        EmployeeStore[]
-  roles                 Role[]
-  permissions           Permission[]
-  employeeRoles         EmployeeRole[]
-  rolePermissions       RolePermission[]
-  categories            Category[]
-  products              Product[]
-  variants              ProductVariant[]
-  barcodes              Barcode[]
-  prices                Price[]
-  inventoryLevels       InventoryLevel[]
-  inventoryMovements    InventoryMovement[]
-  reservations          InventoryReservation[]
-  registers             Register[]
-  sessions              RegisterSession[]
-  customers             Customer[]
-  loyaltyProgram        LoyaltyProgram?
-  loyaltyTransactions   LoyaltyTransaction[]
-  giftCards             GiftCard[]
-  giftCardTransactions  GiftCardTransaction[]
-  orders                Order[]
-  payments              Payment[]
-  refundItems           RefundItem[]
-  reservationLines      InventoryReservationLine[]
-  paymentAccounts       MerchantPaymentAccount[]
-  terminals             TerminalDevice[]
-  assignments           TerminalAssignment[]
-  idempotencyKeys       IdempotencyKey[]
-  auditRecords          AuditRecord[]
-  outboxEvents          OutboxEvent[]
-  vendors               Vendor[]
-  vendorProductMappings VendorProductMapping[]
-  purchaseOrders        PurchaseOrder[]
-  purchaseReceipts      PurchaseReceipt[]
-  purchaseOrderLines    PurchaseOrderLine[]
-  purchaseReceiptLines  PurchaseReceiptLine[]
-  storeProductCosts     StoreProductCost[]
+  id                     String                         @id @default(uuid()) @db.Uuid
+  name                   String
+  createdAt              DateTime                       @default(now())
+  updatedAt              DateTime                       @updatedAt
+  stores                 Store[]
+  employees              Employee[]
+  employeeShifts         EmployeeShift[]
+  employeeStores         EmployeeStore[]
+  roles                  Role[]
+  permissions            Permission[]
+  employeeRoles          EmployeeRole[]
+  rolePermissions        RolePermission[]
+  categories             Category[]
+  products               Product[]
+  variants               ProductVariant[]
+  barcodes               Barcode[]
+  prices                 Price[]
+  inventoryLevels        InventoryLevel[]
+  inventoryMovements     InventoryMovement[]
+  reservations           InventoryReservation[]
+  registers              Register[]
+  sessions               RegisterSession[]
+  customers              Customer[]
+  loyaltyProgram         LoyaltyProgram?
+  loyaltyTransactions    LoyaltyTransaction[]
+  giftCards              GiftCard[]
+  giftCardTransactions   GiftCardTransaction[]
+  orders                 Order[]
+  payments               Payment[]
+  refundItems            RefundItem[]
+  reservationLines       InventoryReservationLine[]
+  paymentAccounts        MerchantPaymentAccount[]
+  terminals              TerminalDevice[]
+  assignments            TerminalAssignment[]
+  idempotencyKeys        IdempotencyKey[]
+  auditRecords           AuditRecord[]
+  outboxEvents           OutboxEvent[]
+  vendors                Vendor[]
+  vendorProductMappings  VendorProductMapping[]
+  purchaseOrders         PurchaseOrder[]
+  purchaseReceipts       PurchaseReceipt[]
+  purchaseOrderLines     PurchaseOrderLine[]
+  purchaseReceiptLines   PurchaseReceiptLine[]
+  storeProductCosts      StoreProductCost[]
+  inventoryTransfers     InventoryTransfer[]
+  inventoryTransferLines InventoryTransferLine[]
+  transferReceipts       InventoryTransferReceipt[]
+  transferReceiptLines   InventoryTransferReceiptLine[]
+  stockCounts            StockCount[]
+  stockCountLines        StockCountLine[]
+  promotions             Promotion[]
 }
 
 model Store {
@@ -250,6 +284,10 @@ model Store {
   assignments         TerminalAssignment[]
   purchaseOrders      PurchaseOrder[]
   productCosts        StoreProductCost[]
+  outboundTransfers   InventoryTransfer[]      @relation("TransferSourceStore")
+  inboundTransfers    InventoryTransfer[]      @relation("TransferDestinationStore")
+  stockCounts         StockCount[]
+  promotions          Promotion[]
 
   @@unique([organizationId, id])
   @@index([organizationId, name])
@@ -257,26 +295,34 @@ model Store {
 }
 
 model Employee {
-  id                    String                @id @default(uuid()) @db.Uuid
-  organizationId        String                @db.Uuid
+  id                    String                     @id @default(uuid()) @db.Uuid
+  organizationId        String                     @db.Uuid
   firstName             String
   lastName              String
-  status                EmployeeStatus        @default(ACTIVE)
+  status                EmployeeStatus             @default(ACTIVE)
   pinHash               String?
-  organization          Organization          @relation(fields: [organizationId], references: [id])
+  organization          Organization               @relation(fields: [organizationId], references: [id])
   stores                EmployeeStore[]
-  sessions              RegisterSession[]     @relation("RegisterSessionOpenedBy")
+  sessions              RegisterSession[]          @relation("RegisterSessionOpenedBy")
   inventoryMovements    InventoryMovement[]
   refunds               Refund[]
-  ageVerifiedOrders     Order[]               @relation("OrderAgeVerifiedBy")
+  ageVerifiedOrders     Order[]                    @relation("OrderAgeVerifiedBy")
   roles                 EmployeeRole[]
-  closedSessions        RegisterSession[]     @relation("RegisterSessionClosedBy")
-  shifts                EmployeeShift[]       @relation("EmployeeShiftEmployee")
-  correctedShifts       EmployeeShift[]       @relation("EmployeeShiftCorrectedBy")
-  loyaltyAdjustments    LoyaltyTransaction[]  @relation("LoyaltyTransactionEmployee")
-  giftCardTransactions  GiftCardTransaction[] @relation("GiftCardTransactionEmployee")
+  closedSessions        RegisterSession[]          @relation("RegisterSessionClosedBy")
+  shifts                EmployeeShift[]            @relation("EmployeeShiftEmployee")
+  correctedShifts       EmployeeShift[]            @relation("EmployeeShiftCorrectedBy")
+  loyaltyAdjustments    LoyaltyTransaction[]       @relation("LoyaltyTransactionEmployee")
+  giftCardTransactions  GiftCardTransaction[]      @relation("GiftCardTransactionEmployee")
   createdPurchaseOrders PurchaseOrder[]
   purchaseReceipts      PurchaseReceipt[]
+  createdTransfers      InventoryTransfer[]        @relation("TransferCreatedBy")
+  submittedTransfers    InventoryTransfer[]        @relation("TransferSubmittedBy")
+  shippedTransfers      InventoryTransfer[]        @relation("TransferShippedBy")
+  receivedTransfers     InventoryTransferReceipt[] @relation("TransferReceivedBy")
+  createdStockCounts    StockCount[]               @relation("StockCountCreatedBy")
+  reviewedStockCounts   StockCount[]               @relation("StockCountReviewedBy")
+  finalizedStockCounts  StockCount[]               @relation("StockCountFinalizedBy")
+  createdPromotions     Promotion[]                @relation("PromotionCreatedBy")
 
   @@unique([organizationId, id])
   @@index([organizationId, lastName, firstName])
@@ -390,6 +436,7 @@ model Category {
   active         Boolean      @default(true)
   organization   Organization @relation(fields: [organizationId], references: [id])
   products       Product[]
+  promotions     Promotion[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, name])
@@ -410,6 +457,7 @@ model Product {
   organization     Organization     @relation(fields: [organizationId], references: [id])
   category         Category         @relation(fields: [organizationId, categoryId], references: [organizationId, id])
   variants         ProductVariant[]
+  promotions       Promotion[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, categoryId, id])
@@ -442,6 +490,9 @@ model ProductVariant {
   vendorMappings     VendorProductMapping[]
   purchaseOrderLines PurchaseOrderLine[]
   storeCosts         StoreProductCost[]
+  transferLines      InventoryTransferLine[]
+  stockCountLines    StockCountLine[]
+  promotions         Promotion[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, sku])
@@ -483,16 +534,18 @@ model Price {
 }
 
 model InventoryLevel {
-  id               String                     @id @default(uuid()) @db.Uuid
-  organizationId   String                     @db.Uuid
-  storeId          String                     @db.Uuid
-  variantId        String                     @db.Uuid
-  onHand           Int                        @default(0)
-  reserved         Int                        @default(0)
-  organization     Organization               @relation(fields: [organizationId], references: [id])
-  store            Store                      @relation(fields: [organizationId, storeId], references: [organizationId, id])
-  variant          ProductVariant             @relation(fields: [organizationId, variantId], references: [organizationId, id])
-  reservationLines InventoryReservationLine[]
+  id                String                     @id @default(uuid()) @db.Uuid
+  organizationId    String                     @db.Uuid
+  storeId           String                     @db.Uuid
+  variantId         String                     @db.Uuid
+  onHand            Int                        @default(0)
+  reserved          Int                        @default(0)
+  lowStockThreshold Int                        @default(0)
+  reorderTarget     Int                        @default(0)
+  organization      Organization               @relation(fields: [organizationId], references: [id])
+  store             Store                      @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  variant           ProductVariant             @relation(fields: [organizationId, variantId], references: [organizationId, id])
+  reservationLines  InventoryReservationLine[]
 
   @@unique([organizationId, storeId, variantId])
   @@index([organizationId, storeId, onHand])
@@ -780,25 +833,28 @@ model Order {
 }
 
 model OrderItem {
-  id                  String         @id @default(uuid()) @db.Uuid
-  organizationId      String         @db.Uuid
-  orderId             String         @db.Uuid
-  variantId           String         @db.Uuid
-  productNameSnapshot String
-  variantNameSnapshot String
-  skuSnapshot         String
-  barcodeSnapshot     String?
-  unitPriceMinor      BigInt
-  quantity            Int
-  subtotalMinor       BigInt
-  discountMinor       BigInt
-  taxMinor            BigInt
-  totalMinor          BigInt
-  currency            String         @default("USD") @db.Char(3)
-  taxCategorySnapshot String         @default("STANDARD")
-  order               Order          @relation(fields: [organizationId, orderId], references: [organizationId, id])
-  variant             ProductVariant @relation(fields: [organizationId, variantId], references: [organizationId, id])
-  refundItems         RefundItem[]
+  id                    String         @id @default(uuid()) @db.Uuid
+  organizationId        String         @db.Uuid
+  orderId               String         @db.Uuid
+  variantId             String         @db.Uuid
+  productNameSnapshot   String
+  variantNameSnapshot   String
+  skuSnapshot           String
+  barcodeSnapshot       String?
+  unitPriceMinor        BigInt
+  quantity              Int
+  subtotalMinor         BigInt
+  discountMinor         BigInt
+  taxMinor              BigInt
+  totalMinor            BigInt
+  currency              String         @default("USD") @db.Char(3)
+  taxCategorySnapshot   String         @default("STANDARD")
+  promotionId           String?        @db.Uuid
+  promotionNameSnapshot String?
+  order                 Order          @relation(fields: [organizationId, orderId], references: [organizationId, id])
+  variant               ProductVariant @relation(fields: [organizationId, variantId], references: [organizationId, id])
+  refundItems           RefundItem[]
+  promotion             Promotion?     @relation(fields: [organizationId, promotionId], references: [organizationId, id])
 
   @@unique([organizationId, id])
   @@unique([organizationId, orderId, id])
@@ -1139,4 +1195,170 @@ model PurchaseReceiptLine {
   @@unique([organizationId, id])
   @@unique([organizationId, receiptId, purchaseOrderLineId])
   @@index([organizationId, purchaseOrderLineId])
+}
+
+model InventoryTransfer {
+  id                     String                     @id @default(uuid()) @db.Uuid
+  organizationId         String                     @db.Uuid
+  sourceStoreId          String                     @db.Uuid
+  destinationStoreId     String                     @db.Uuid
+  createdByEmployeeId    String                     @db.Uuid
+  submittedByEmployeeId  String?                    @db.Uuid
+  shippedByEmployeeId    String?                    @db.Uuid
+  transferNumber         String
+  status                 InventoryTransferStatus    @default(DRAFT)
+  notes                  String?
+  shipIdempotencyKey     String?
+  shipRequestFingerprint String?
+  submittedAt            DateTime?
+  shippedAt              DateTime?
+  receivedAt             DateTime?
+  cancelledAt            DateTime?
+  createdAt              DateTime                   @default(now())
+  updatedAt              DateTime                   @updatedAt
+  organization           Organization               @relation(fields: [organizationId], references: [id])
+  sourceStore            Store                      @relation("TransferSourceStore", fields: [organizationId, sourceStoreId], references: [organizationId, id])
+  destinationStore       Store                      @relation("TransferDestinationStore", fields: [organizationId, destinationStoreId], references: [organizationId, id])
+  createdBy              Employee                   @relation("TransferCreatedBy", fields: [organizationId, createdByEmployeeId], references: [organizationId, id])
+  submittedBy            Employee?                  @relation("TransferSubmittedBy", fields: [organizationId, submittedByEmployeeId], references: [organizationId, id])
+  shippedBy              Employee?                  @relation("TransferShippedBy", fields: [organizationId, shippedByEmployeeId], references: [organizationId, id])
+  lines                  InventoryTransferLine[]
+  receipts               InventoryTransferReceipt[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, transferNumber])
+  @@unique([organizationId, shipIdempotencyKey])
+  @@index([organizationId, sourceStoreId, status, createdAt])
+  @@index([organizationId, destinationStoreId, status, createdAt])
+}
+
+model InventoryTransferLine {
+  id                String                         @id @default(uuid()) @db.Uuid
+  organizationId    String                         @db.Uuid
+  transferId        String                         @db.Uuid
+  variantId         String                         @db.Uuid
+  requestedQuantity Int
+  shippedQuantity   Int                            @default(0)
+  receivedQuantity  Int                            @default(0)
+  organization      Organization                   @relation(fields: [organizationId], references: [id])
+  transfer          InventoryTransfer              @relation(fields: [organizationId, transferId], references: [organizationId, id], onDelete: Cascade)
+  variant           ProductVariant                 @relation(fields: [organizationId, variantId], references: [organizationId, id])
+  receiptLines      InventoryTransferReceiptLine[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, transferId, variantId])
+}
+
+model InventoryTransferReceipt {
+  id                   String                         @id @default(uuid()) @db.Uuid
+  organizationId       String                         @db.Uuid
+  transferId           String                         @db.Uuid
+  receivedByEmployeeId String                         @db.Uuid
+  idempotencyKey       String
+  requestFingerprint   String
+  notes                String?
+  receivedAt           DateTime                       @default(now())
+  organization         Organization                   @relation(fields: [organizationId], references: [id])
+  transfer             InventoryTransfer              @relation(fields: [organizationId, transferId], references: [organizationId, id])
+  receivedBy           Employee                       @relation("TransferReceivedBy", fields: [organizationId, receivedByEmployeeId], references: [organizationId, id])
+  lines                InventoryTransferReceiptLine[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, transferId, receivedAt])
+}
+
+model InventoryTransferReceiptLine {
+  id             String                   @id @default(uuid()) @db.Uuid
+  organizationId String                   @db.Uuid
+  receiptId      String                   @db.Uuid
+  transferLineId String                   @db.Uuid
+  quantity       Int
+  organization   Organization             @relation(fields: [organizationId], references: [id])
+  receipt        InventoryTransferReceipt @relation(fields: [organizationId, receiptId], references: [organizationId, id], onDelete: Cascade)
+  transferLine   InventoryTransferLine    @relation(fields: [organizationId, transferLineId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, receiptId, transferLineId])
+}
+
+model StockCount {
+  id                    String           @id @default(uuid()) @db.Uuid
+  organizationId        String           @db.Uuid
+  storeId               String           @db.Uuid
+  createdByEmployeeId   String           @db.Uuid
+  reviewedByEmployeeId  String?          @db.Uuid
+  finalizedByEmployeeId String?          @db.Uuid
+  countNumber           String
+  status                StockCountStatus @default(DRAFT)
+  notes                 String?
+  reviewedAt            DateTime?
+  finalizedAt           DateTime?
+  cancelledAt           DateTime?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  organization          Organization     @relation(fields: [organizationId], references: [id])
+  store                 Store            @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  createdBy             Employee         @relation("StockCountCreatedBy", fields: [organizationId, createdByEmployeeId], references: [organizationId, id])
+  reviewedBy            Employee?        @relation("StockCountReviewedBy", fields: [organizationId, reviewedByEmployeeId], references: [organizationId, id])
+  finalizedBy           Employee?        @relation("StockCountFinalizedBy", fields: [organizationId, finalizedByEmployeeId], references: [organizationId, id])
+  lines                 StockCountLine[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, countNumber])
+  @@index([organizationId, storeId, status, createdAt])
+}
+
+model StockCountLine {
+  id               String         @id @default(uuid()) @db.Uuid
+  organizationId   String         @db.Uuid
+  stockCountId     String         @db.Uuid
+  variantId        String         @db.Uuid
+  expectedQuantity Int
+  countedQuantity  Int?
+  variance         Int?
+  organization     Organization   @relation(fields: [organizationId], references: [id])
+  stockCount       StockCount     @relation(fields: [organizationId, stockCountId], references: [organizationId, id], onDelete: Cascade)
+  variant          ProductVariant @relation(fields: [organizationId, variantId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, stockCountId, variantId])
+}
+
+model Promotion {
+  id                    String          @id @default(uuid()) @db.Uuid
+  organizationId        String          @db.Uuid
+  storeId               String?         @db.Uuid
+  categoryId            String?         @db.Uuid
+  productId             String?         @db.Uuid
+  variantId             String?         @db.Uuid
+  createdByEmployeeId   String          @db.Uuid
+  name                  String
+  type                  PromotionType
+  scope                 PromotionScope
+  percentageBasisPoints Int?
+  fixedAmountMinor      BigInt?
+  bundleQuantity        Int?
+  bundlePriceMinor      BigInt?
+  minimumQuantity       Int             @default(1)
+  minimumSpendMinor     BigInt          @default(0)
+  priority              Int             @default(0)
+  startsAt              DateTime
+  endsAt                DateTime
+  active                Boolean         @default(true)
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  organization          Organization    @relation(fields: [organizationId], references: [id])
+  store                 Store?          @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  category              Category?       @relation(fields: [organizationId, categoryId], references: [organizationId, id])
+  product               Product?        @relation(fields: [organizationId, productId], references: [organizationId, id])
+  variant               ProductVariant? @relation(fields: [organizationId, variantId], references: [organizationId, id])
+  createdBy             Employee        @relation("PromotionCreatedBy", fields: [organizationId, createdByEmployeeId], references: [organizationId, id])
+  orderItems            OrderItem[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, storeId, active, startsAt, endsAt])
+  @@index([organizationId, categoryId])
+  @@index([organizationId, productId])
+  @@index([organizationId, variantId])
 }

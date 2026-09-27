@@ -13,7 +13,7 @@ export type InventoryMutationInput = {
 async function requireInventoryContext(
   tx: Prisma.TransactionClient,
   input: InventoryMutationInput,
-): Promise<void> {
+): Promise<{ lowStockThreshold: number }> {
   const [variant, employee] = await Promise.all([
     tx.productVariant.findFirst({
       where: {
@@ -34,6 +34,7 @@ async function requireInventoryContext(
   ]);
   if (!variant) throw new PosError('INVENTORY_VARIANT_NOT_FOUND', 404);
   if (!employee) throw new PosError('EMPLOYEE_STORE_ACCESS_DENIED', 403);
+  return variant;
 }
 
 export async function postOpeningBalance(
@@ -44,7 +45,7 @@ export async function postOpeningBalance(
     throw new PosError('INVENTORY_QUANTITY_INVALID');
   if (!input.reason.trim()) throw new PosError('INVENTORY_REASON_REQUIRED');
   return prisma.$transaction(async (tx) => {
-    await requireInventoryContext(tx, input);
+    const variant = await requireInventoryContext(tx, input);
     const existing = await tx.inventoryMovement.findFirst({
       where: {
         organizationId: input.organizationId,
@@ -67,6 +68,8 @@ export async function postOpeningBalance(
         storeId: input.storeId,
         variantId: input.variantId,
         onHand: input.quantity,
+        lowStockThreshold: variant.lowStockThreshold,
+        reorderTarget: variant.lowStockThreshold,
       },
       update: { onHand: { increment: input.quantity } },
     });

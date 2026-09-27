@@ -26,6 +26,7 @@ import {
   openRegisterSession,
   parseMoneyApi,
   postOpeningBalance,
+  quoteCheckout,
   refundOrder,
   searchOrders,
   voidOrder,
@@ -152,6 +153,12 @@ export class CorePosController {
       ...(body.orderDiscount ? { orderDiscount: discountFromBody(body.orderDiscount)! } : {}),
       ...(body.ageVerified === undefined ? {} : { ageVerified: body.ageVerified }),
       ...(body.customerId ? { customerId: body.customerId } : {}) };
+  }
+
+  @Post('checkout/quote')
+  quote(@Req() request: TenantRequest, @Body() body: { lines: Array<{ variantId: string; quantity: number }> }) {
+    const context = this.context(request, 'sale:create');
+    return quoteCheckout(this.prisma, { organizationId: context.organizationId, storeId: context.storeId, lines: body.lines });
   }
 
   @Post('checkout/cash')
