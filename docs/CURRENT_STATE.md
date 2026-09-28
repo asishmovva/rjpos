@@ -4,7 +4,7 @@ Updated: 2026-09-27
 
 ## Phase
 
-Phases 0-4 are merged into `main`. Phase 5 adds store-specific inventory policy, safe inter-store transfers, cycle counts and variances, replenishment suggestions, server-authoritative promotions/multi-buy pricing, register promotion display, and the corresponding back-office/RBAC/audit workflows. Phase 5 is implemented on `phase-5` for review and is not merged.
+Phases 0-5 are merged into `main`. Phase 6 adds a server-authoritative reporting/analytics engine (sales, products, inventory, purchasing, employees, customers, gift cards, promotions), a period-aware dashboard upgrade, CSV export, a provider-neutral accounting-export boundary, a dedicated `/admin/reports` workspace, and reporting RBAC. Phase 6 is implemented on `phase-6` for review and is not merged.
 
 ## Delivered
 
@@ -40,6 +40,10 @@ Phases 0-4 are merged into `main`. Phase 5 adds store-specific inventory policy,
 - Percentage, fixed, and multi-buy promotions across variant/product/category and optional store scope, with deterministic priority, active windows, minimums, paid-price refund behavior, and promotion snapshots on order lines.
 - Server-authoritative register quotes and checkout recalculation; the cart and receipt display original/promotional/final amounts without accepting promotion values from the renderer.
 - Phase 5 back-office views for transfers, counts, variances, replenishment, and promotions, with Owner/Manager access and Cashier denial.
+- A single server-side reporting engine covering sales, products, inventory, purchasing, employees/register-sessions, customers/loyalty, gift cards, and promotions, with tenant/store-scoped, timezone-correct date filtering and historical order-item snapshots.
+- CSV export for every report kind (with CSV formula-injection protection) and a provider-neutral accounting-export JSON boundary composing sales, inventory, and purchasing data.
+- A period-aware dashboard upgrade (net sales, transactions, average sale, refunds, top products, outstanding purchase orders) built on the same reporting engine, and a dedicated `/admin/reports` workspace with report/date/store filters.
+- `report:read`/`report:export` RBAC restricted to Owner/Manager, and a `RegisterSession` reporting-period index added only where a report query needed it.
 
 ## Local Endpoint
 
@@ -47,4 +51,4 @@ RJ POS Docker Compose maps PostgreSQL to `127.0.0.1:15432` and Redis to `127.0.0
 
 ## Verification
 
-Phase 0 evidence remains in `docs/phase-0/final-qa.md`. Phase 1-4 evidence remains under their respective phase directories. Phase 5 implementation and QA evidence is under `docs/phase-5/`, including real PostgreSQL race coverage and the PO-to-transfer-to-count-to-promoted-sale-to-refund E2E. Real payment-provider, certified-hardware, payroll/scheduling, advanced loyalty/marketing, accounting, automatic ordering, e-commerce, and advanced analytics remain intentionally out of scope.
+Phase 0 evidence remains in `docs/phase-0/final-qa.md`. Phase 1-5 evidence remains under their respective phase directories. Phase 6 implementation and QA evidence is under `docs/phase-6/`, including real PostgreSQL reporting-integration coverage and a purchasing-to-transfer-to-count-to-promotion-to-loyalty/gift-card-sale-to-refund-to-register-close-to-reports-to-CSV E2E. Real payment-provider, certified-hardware, payroll/scheduling, advanced loyalty/marketing, a specific accounting-vendor sync, automatic ordering, e-commerce, and advanced predictive analytics remain intentionally out of scope.

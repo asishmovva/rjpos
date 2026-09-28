@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { PosError } from './pos-errors.js';
+import { getReport, type ReportFilters } from './reporting.js';
 
 export type AdminActor = {
   organizationId: string;
@@ -565,18 +566,33 @@ export async function listAuditRecords(prisma: PrismaClient, actor: AdminActor, 
   ]); return { items, page, pageSize, total };
 }
 
-export async function getDashboard(prisma: PrismaClient, actor: AdminActor, storeId?: string) {
-  const now = new Date(); const from = new Date(now); from.setHours(0, 0, 0, 0);
-  const orderWhere: Prisma.OrderWhereInput = { organizationId: actor.organizationId, ...(storeId ? { storeId } : {}), createdAt: { gte: from }, status: { in: ['COMPLETED', 'PARTIALLY_REFUNDED', 'REFUNDED'] } };
-  const refundWhere: Prisma.RefundWhereInput = { organizationId: actor.organizationId, status: 'SUCCEEDED', createdAt: { gte: from }, ...(storeId ? { order: { storeId } } : {}) };
-  const [orders, refunds, openRegisters, inventory] = await Promise.all([
-    prisma.order.aggregate({ where: orderWhere, _sum: { totalMinor: true }, _count: true }),
-    prisma.refund.aggregate({ where: refundWhere, _sum: { amountMinor: true } }),
+export type DashboardInput = { storeId?: string; from?: string; to?: string };
+
+export async function getDashboard(prisma: PrismaClient, actor: AdminActor, input: DashboardInput | string = {}) {
+  // Backward-compatible with the previous (storeId?: string) call signature.
+  const { storeId, from, to } = typeof input === 'string' ? { storeId: input, from: undefined, to: undefined } : input;
+  const now = new Date();
+  const reportFilters: ReportFilters = { ...(storeId ? { storeId } : {}), ...(from ? { from } : {}), ...(to ? { to } : {}) };
+  const [sales, products, openRegisters, outstandingPurchaseOrders, inventory] = await Promise.all([
+    getReport(prisma, actor, 'sales', reportFilters),
+    getReport(prisma, actor, 'products', { ...reportFilters, pageSize: 5 }),
     prisma.registerSession.count({ where: { organizationId: actor.organizationId, ...(storeId ? { storeId } : {}), status: { in: ['OPEN', 'CLOSING'] } } }),
+    prisma.purchaseOrder.count({ where: { organizationId: actor.organizationId, ...(storeId ? { storeId } : {}), status: { in: ['SUBMITTED', 'PARTIALLY_RECEIVED'] } } }),
     prisma.inventoryLevel.findMany({ where: { organizationId: actor.organizationId, ...(storeId ? { storeId } : {}) }, select: { onHand: true, reserved: true, variant: { select: { lowStockThreshold: true } } } }),
   ]);
-  return { salesMinor: (orders._sum.totalMinor ?? 0n).toString(), transactions: orders._count,
-    refundMinor: (refunds._sum.amountMinor ?? 0n).toString(), openRegisters,
+  const summary = (sales.data as { summary: { netSalesMinor: string; transactionCount: number; refundsMinor: string; averageTransactionMinor: string } }).summary;
+  const topSellers = (products.data as unknown as { topSellers: Array<{ label: string; quantitySold: number; revenueMinor: string }> }).topSellers;
+  return {
+    salesMinor: summary.netSalesMinor,
+    transactions: summary.transactionCount,
+    refundMinor: summary.refundsMinor,
+    averageTransactionMinor: summary.averageTransactionMinor,
+    openRegisters,
     lowStockProducts: inventory.filter((level) => level.onHand - level.reserved <= level.variant.lowStockThreshold).length,
-    asOf: now.toISOString() };
+    topProducts: topSellers.map((row) => ({ label: row.label, quantitySold: row.quantitySold, revenueMinor: row.revenueMinor })),
+    outstandingPurchaseOrders,
+    from: sales.filters.from,
+    to: sales.filters.toExclusive,
+    asOf: now.toISOString(),
+  };
 }

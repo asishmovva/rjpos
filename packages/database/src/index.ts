@@ -120,6 +120,15 @@ export {
   type PromotionInput,
 } from './phase-five.js';
 export {
+  REPORT_KINDS,
+  accountingExport,
+  getReport,
+  normalizeReportFilters,
+  reportCsv,
+  type ReportFilters,
+  type ReportKind,
+} from './reporting.js';
+export {
   findProductForOrganization,
   requireRegisterContext,
   updateProductForOrganization,
