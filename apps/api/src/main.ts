@@ -32,6 +32,8 @@ import { PurchasingController } from './purchasing.js';
 import { PhaseFiveController } from './phase-five.js';
 import { ReportingController } from './reporting.js';
 import { PhaseSevenController } from './phase-seven.js';
+import { InvoiceController, INVOICE_OCR_PROVIDER } from './invoices.js';
+import { LocalFixtureInvoiceOcrProvider, UnavailableInvoiceOcrProvider } from './invoice-ocr.js';
 
 const environment = loadEnvironment();
 const prisma = new PrismaClient({
@@ -42,6 +44,9 @@ const terminalProvider = process.env.RJPOS_TERMINAL_PROVIDER === 'http'
   : process.env.NODE_ENV === 'production'
     ? new UnavailableTerminalProvider()
     : new SimulatedTerminalProvider();
+const invoiceOcrProvider = process.env.NODE_ENV !== 'production' && (process.env.RJPOS_INVOICE_OCR_PROVIDER ?? 'fixture') === 'fixture'
+  ? new LocalFixtureInvoiceOcrProvider()
+  : new UnavailableInvoiceOcrProvider();
 const requestWindows = new Map<string, { startedAt: number; count: number }>();
 function productionHeaders(request: Request, response: Response, next: NextFunction): void {
   response.setHeader('x-content-type-options', 'nosniff'); response.setHeader('x-frame-options', 'DENY'); response.setHeader('referrer-policy', 'no-referrer'); response.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=()');
@@ -52,13 +57,14 @@ function productionHeaders(request: Request, response: Response, next: NextFunct
 }
 
 @Module({
-  controllers: [HealthController, CorePosController, BackOfficeController, PhaseThreeController, PurchasingController, PhaseFiveController, ReportingController, PhaseSevenController],
+  controllers: [HealthController, CorePosController, BackOfficeController, PhaseThreeController, PurchasingController, PhaseFiveController, ReportingController, PhaseSevenController, InvoiceController],
   providers: [
     HealthService,
     TenantContextService,
     DevelopmentAuthMiddleware,
     { provide: PRISMA, useValue: prisma },
     { provide: TERMINAL_PROVIDER, useValue: terminalProvider },
+    { provide: INVOICE_OCR_PROVIDER, useValue: invoiceOcrProvider },
     { provide: POSTGRES_CHECK, useValue: () => checkPostgres(prisma) },
     { provide: REDIS_CHECK, useValue: () => checkRedis(environment.REDIS_URL) },
   ],

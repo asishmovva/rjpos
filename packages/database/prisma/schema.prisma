@@ -124,6 +124,27 @@ enum PurchaseOrderStatus {
   CANCELLED
 }
 
+enum InvoiceOcrStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum InvoiceReviewStatus {
+  DRAFT
+  CONFIRMED
+  REJECTED
+}
+
+enum InvoiceLineMatchStatus {
+  MATCHED
+  MASTER_CATALOG
+  NEEDS_REVIEW
+  NEW_PRODUCT
+  INVALID
+}
+
 enum InventoryTransferStatus {
   DRAFT
   SUBMITTED
@@ -264,6 +285,8 @@ model Organization {
   promotions             Promotion[]
   quickKeys              QuickKey[]
   heldTransactions       HeldTransaction[]
+  invoiceDocuments       InvoiceDocument[]
+  invoiceLines           InvoiceLine[]
 }
 
 model Store {
@@ -298,6 +321,7 @@ model Store {
   promotions          Promotion[]
   quickKeys           QuickKey[]
   heldTransactions    HeldTransaction[]
+  invoiceDocuments    InvoiceDocument[]
 
   @@unique([organizationId, id])
   @@index([organizationId, name])
@@ -333,8 +357,11 @@ model Employee {
   reviewedStockCounts   StockCount[]               @relation("StockCountReviewedBy")
   finalizedStockCounts  StockCount[]               @relation("StockCountFinalizedBy")
   createdPromotions     Promotion[]                @relation("PromotionCreatedBy")
-  heldTransactions      HeldTransaction[]           @relation("HeldTransactionCashier")
-  resumedTransactions   HeldTransaction[]           @relation("HeldTransactionResumedBy")
+  heldTransactions      HeldTransaction[]          @relation("HeldTransactionCashier")
+  resumedTransactions   HeldTransaction[]          @relation("HeldTransactionResumedBy")
+  uploadedInvoices      InvoiceDocument[]          @relation("InvoiceUploadedBy")
+  confirmedInvoices     InvoiceDocument[]          @relation("InvoiceConfirmedBy")
+  rejectedInvoices      InvoiceDocument[]          @relation("InvoiceRejectedBy")
 
   @@unique([organizationId, id])
   @@index([organizationId, lastName, firstName])
@@ -508,6 +535,7 @@ model ProductVariant {
   stockCountLines    StockCountLine[]
   promotions         Promotion[]
   quickKeys          QuickKey[]
+  invoiceLines       InvoiceLine[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, sku])
@@ -1058,6 +1086,7 @@ model MasterProduct {
   createdAt           DateTime         @default(now())
   updatedAt           DateTime         @updatedAt
   variants            ProductVariant[]
+  invoiceLines        InvoiceLine[]
 
   @@index([name])
   @@index([brand])
@@ -1096,6 +1125,7 @@ model Vendor {
   organization     Organization           @relation(fields: [organizationId], references: [id])
   mappings         VendorProductMapping[]
   purchaseOrders   PurchaseOrder[]
+  invoiceDocuments InvoiceDocument[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, name])
@@ -1145,6 +1175,7 @@ model PurchaseOrder {
   createdBy           Employee            @relation(fields: [organizationId, createdByEmployeeId], references: [organizationId, id])
   lines               PurchaseOrderLine[]
   receipts            PurchaseReceipt[]
+  invoiceDocuments    InvoiceDocument[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, poNumber])
@@ -1428,4 +1459,82 @@ model HeldTransaction {
   @@unique([organizationId, id])
   @@unique([organizationId, idempotencyKey])
   @@index([organizationId, storeId, registerId, status, heldAt(sort: Desc)])
+}
+
+model InvoiceDocument {
+  id                    String              @id @default(uuid()) @db.Uuid
+  organizationId        String              @db.Uuid
+  storeId               String              @db.Uuid
+  vendorId              String?             @db.Uuid
+  purchaseOrderId       String?             @db.Uuid
+  uploadedByEmployeeId  String              @db.Uuid
+  confirmedByEmployeeId String?             @db.Uuid
+  rejectedByEmployeeId  String?             @db.Uuid
+  originalFilename      String
+  mimeType              String
+  fileSize              Int
+  storageReference      String
+  documentHash          String
+  documentData          Bytes
+  ocrStatus             InvoiceOcrStatus    @default(PENDING)
+  ocrProvider           String?
+  ocrError              String?
+  ocrConfidence         Decimal?            @db.Decimal(5, 4)
+  rawProviderResult     Json?
+  reviewStatus          InvoiceReviewStatus @default(DRAFT)
+  vendorNameExtracted   String?
+  invoiceNumber         String?
+  invoiceDate           DateTime?
+  subtotalMinor         BigInt?
+  taxMinor              BigInt?
+  totalMinor            BigInt?
+  possibleDuplicate     Boolean             @default(false)
+  uploadedAt            DateTime            @default(now())
+  confirmedAt           DateTime?
+  rejectedAt            DateTime?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  organization          Organization        @relation(fields: [organizationId], references: [id])
+  store                 Store               @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  vendor                Vendor?             @relation(fields: [organizationId, vendorId], references: [organizationId, id])
+  purchaseOrder         PurchaseOrder?      @relation(fields: [organizationId, purchaseOrderId], references: [organizationId, id])
+  uploadedBy            Employee            @relation("InvoiceUploadedBy", fields: [organizationId, uploadedByEmployeeId], references: [organizationId, id])
+  confirmedBy           Employee?           @relation("InvoiceConfirmedBy", fields: [organizationId, confirmedByEmployeeId], references: [organizationId, id])
+  rejectedBy            Employee?           @relation("InvoiceRejectedBy", fields: [organizationId, rejectedByEmployeeId], references: [organizationId, id])
+  lines                 InvoiceLine[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, documentHash])
+  @@index([organizationId, storeId, reviewStatus, uploadedAt(sort: Desc)])
+  @@index([organizationId, vendorId, invoiceNumber, invoiceDate])
+}
+
+model InvoiceLine {
+  id                String                 @id @default(uuid()) @db.Uuid
+  organizationId    String                 @db.Uuid
+  invoiceDocumentId String                 @db.Uuid
+  variantId         String?                @db.Uuid
+  masterProductId   String?                @db.Uuid
+  lineNumber        Int
+  description       String
+  upc               String?
+  vendorSku         String?
+  quantity          Int
+  caseQuantity      Int                    @default(1)
+  unitCostMinor     BigInt
+  lineTotalMinor    BigInt
+  confidence        Decimal?               @db.Decimal(5, 4)
+  matchStatus       InvoiceLineMatchStatus @default(NEEDS_REVIEW)
+  newProductData    Json?
+  ignored           Boolean                @default(false)
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  organization      Organization           @relation(fields: [organizationId], references: [id])
+  invoiceDocument   InvoiceDocument        @relation(fields: [organizationId, invoiceDocumentId], references: [organizationId, id], onDelete: Cascade)
+  variant           ProductVariant?        @relation(fields: [organizationId, variantId], references: [organizationId, id])
+  masterProduct     MasterProduct?         @relation(fields: [masterProductId], references: [id])
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, invoiceDocumentId, lineNumber])
+  @@index([organizationId, invoiceDocumentId, matchStatus])
 }

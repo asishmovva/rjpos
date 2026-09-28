@@ -34,6 +34,21 @@ export {
 export { PosError } from './pos-errors.js';
 export { getReceipt, refundOrder, searchOrders, voidOrder } from './orders.js';
 export {
+  applyInvoiceOcrResult,
+  confirmInvoiceDocument,
+  createInvoiceDocument,
+  getInvoiceDocument,
+  getInvoiceDocumentInput,
+  listInvoiceDocuments,
+  markInvoiceOcrFailed,
+  markInvoiceOcrProcessing,
+  rejectInvoiceDocument,
+  updateInvoiceDocument,
+  updateInvoiceLine,
+  type InvoiceOcrLine,
+  type InvoiceOcrResult,
+} from './invoices.js';
+export {
   createCategory,
   createEmployee,
   createProduct,

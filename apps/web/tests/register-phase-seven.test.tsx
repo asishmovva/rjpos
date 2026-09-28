@@ -20,6 +20,9 @@ describe('Phase 7 touch register and HID scanning', () => {
     if (url.endsWith('/workforce/clock-in') && init?.method === 'POST') return response({ id: 'shift-1', clockedOutAt: null });
     if (url.endsWith('/checkout/quote')) { const body = JSON.parse(String(init?.body)) as { lines: Array<{ quantity: number }> }; const amount = String(body.lines[0]!.quantity * 1000); return response({ subtotalMinor: amount, discountMinor: '0', taxMinor: '0', totalMinor: amount, lines: [{ variantId: 'variant-1', unitPriceMinor: '1000', quantity: body.lines[0]!.quantity, subtotalMinor: amount, discountMinor: '0', taxMinor: '0', totalMinor: amount, promotionName: null }] }); }
     if (url.endsWith('/held-transactions') && init?.method === 'POST') return response({ id: 'held-1' });
+    if (url.endsWith('/orders')) return response([{ id: 'order-1', orderNumber: 'ORD-1', status: 'COMPLETED', totalMinor: '1000' }]);
+    if (url.endsWith('/orders/order-1/receipt')) return response({ id: 'order-1', orderNumber: 'ORD-1', subtotalMinor: '1000', discountMinor: '0', taxMinor: '0', totalMinor: '1000', items: [{ id: 'item-1', productNameSnapshot: 'Quick Whiskey', variantNameSnapshot: '750 ml', quantity: 1, unitPriceMinor: '1000', subtotalMinor: '1000', discountMinor: '0', totalMinor: '1000', promotionNameSnapshot: null }], refunds: [] });
+    if (url.endsWith('/orders/order-1/refund') && init?.method === 'POST') return response({ refundId: 'refund-1', status: 'SUCCEEDED' });
     return response([]);
   })));
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -56,11 +59,42 @@ describe('Phase 7 touch register and HID scanning', () => {
     await waitFor(() => expect(screen.getByText('Quick Whiskey Reserve')).toBeTruthy());
   });
 
+  it('supports keyboard navigation and Enter selection in product suggestions', async () => {
+    const user = userEvent.setup(); render(<Register />);
+    const search = await screen.findByRole('combobox', { name: 'Scan UPC, enter SKU, or search products' });
+    await user.type(search, 'quick');
+    await screen.findByRole('listbox', { name: 'Product search results' });
+    await user.keyboard('{ArrowDown}{Enter}');
+    await waitFor(() => expect(screen.getByText('Quick Whiskey Reserve')).toBeTruthy());
+  });
+
+  it('uses Price Check without adding the selected item to the cart', async () => {
+    const user = userEvent.setup(); render(<Register />);
+    await user.click(await screen.findByRole('button', { name: 'Price Check' }));
+    await user.type(screen.getByRole('combobox'), 'quick');
+    await user.click((await screen.findAllByRole('option'))[0]!);
+    expect(screen.queryByLabelText('Quantity')).toBeNull();
+    expect(screen.getByText('Quick Whiskey · 750 ml: $10.00.')).toBeTruthy();
+  });
+
   it('keeps clock and inventory controls wired to their API operations', async () => {
     const user = userEvent.setup(); render(<Register />);
     await user.click(await screen.findByRole('button', { name: 'Clock in' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Clock out' })).toBeTruthy());
     await user.click(screen.getByRole('button', { name: 'Inventory' }));
     expect(await screen.findByText('6 available')).toBeTruthy();
+  });
+
+  it('submits reviewed item-level returns through the refund API', async () => {
+    const user = userEvent.setup(); render(<Register />);
+    await user.click(await screen.findByRole('button', { name: 'Return' }));
+    await user.click(await screen.findByRole('button', { name: /ORD-1/ }));
+    await user.clear(await screen.findByLabelText('Return quantity for Quick Whiskey'));
+    await user.type(screen.getByLabelText('Return quantity for Quick Whiskey'), '1');
+    await user.type(screen.getByLabelText('Return reason'), 'Customer return');
+    await user.click(screen.getByRole('button', { name: 'Confirm refund and return to stock' }));
+    await waitFor(() => expect(screen.getByText('Return completed. Refund and stock movement were recorded.')).toBeTruthy());
+    const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url).endsWith('/orders/order-1/refund') && init?.method === 'POST');
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ reason: 'Customer return', items: [{ orderItemId: 'item-1', quantity: 1, returnToStock: true }] });
   });
 });

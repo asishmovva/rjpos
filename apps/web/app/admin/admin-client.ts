@@ -36,6 +36,20 @@ export type Store = {
   taxRateBasisPoints: number;
   receiptFooter: string | null;
 };
+export type InvoiceLine = {
+  id: string; lineNumber: number; description: string; upc: string | null; vendorSku: string | null;
+  quantity: number; caseQuantity: number; unitCostMinor: string; lineTotalMinor: string; confidence: string | null;
+  matchStatus: 'MATCHED' | 'MASTER_CATALOG' | 'NEEDS_REVIEW' | 'NEW_PRODUCT' | 'INVALID'; ignored: boolean;
+  variant: (Variant & { product: { name: string }; barcodes: Array<{ barcodeValue: string }> }) | null;
+  masterProduct: MasterProduct | null;
+};
+export type InvoiceDocument = {
+  id: string; originalFilename: string; mimeType: string; fileSize: number; uploadedAt: string;
+  ocrStatus: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'; ocrError: string | null; ocrProvider: string | null;
+  reviewStatus: 'DRAFT' | 'CONFIRMED' | 'REJECTED'; vendorNameExtracted: string | null; invoiceNumber: string | null;
+  invoiceDate: string | null; subtotalMinor: string | null; taxMinor: string | null; totalMinor: string | null;
+  possibleDuplicate: boolean; vendor: Vendor | null; store: Store; lines: InvoiceLine[];
+};
 export type InventoryRow = {
   id: string;
   storeId: string;
@@ -422,6 +436,14 @@ const json = (method: 'POST' | 'PATCH', body: unknown): RequestInit => ({
 });
 
 export const adminApi = {
+  invoices: () => adminRequest<Array<Pick<InvoiceDocument, 'id' | 'originalFilename' | 'uploadedAt' | 'ocrStatus' | 'reviewStatus' | 'invoiceNumber' | 'totalMinor' | 'possibleDuplicate'> & { vendor: { id: string; name: string } | null }>>('/invoices'),
+  invoice: (id: string) => adminRequest<InvoiceDocument>(`/invoices/${id}`),
+  uploadInvoice: (body: { originalFilename: string; mimeType: string; contentBase64: string; storeId?: string; vendorId?: string }) => adminRequest<InvoiceDocument>('/invoices/upload', json('POST', body)),
+  retryInvoiceOcr: (id: string) => adminRequest<InvoiceDocument>(`/invoices/${id}/retry-ocr`, json('POST', {})),
+  updateInvoice: (id: string, body: Record<string, unknown>) => adminRequest<InvoiceDocument>(`/invoices/${id}`, json('PATCH', body)),
+  updateInvoiceLine: (invoiceId: string, lineId: string, body: Record<string, unknown>) => adminRequest<InvoiceDocument>(`/invoices/${invoiceId}/lines/${lineId}`, json('PATCH', body)),
+  rejectInvoice: (id: string) => adminRequest<InvoiceDocument>(`/invoices/${id}/reject`, json('POST', {})),
+  confirmInvoice: (id: string, acknowledgeDuplicate = false) => adminRequest<InvoiceDocument>(`/invoices/${id}/confirm`, json('POST', { acknowledgeDuplicate })),
   dashboard: (storeId?: string, from?: string, to?: string) => adminRequest<Dashboard>(`/dashboard${query({ storeId, from, to })}`),
   categories: (search = '') => adminRequest<PageResult<Category>>(`/categories${query({ search, pageSize: 100 })}`),
   createCategory: (name: string) => adminRequest<Category>('/categories', json('POST', { name })),

@@ -28,6 +28,8 @@ The web application listens explicitly on port 3000. During development, Electro
 
 Build the Windows NSIS installer with `pnpm --filter "@rjpos/register" package:win`. Output is written below `apps/register/release/` and is intentionally Git-ignored. Production defaults never simulate a successful terminal or physical hardware operation. Configure a certified terminal only with `RJPOS_TERMINAL_PROVIDER=http`, an HTTPS `RJPOS_TERMINAL_ENDPOINT`, and a locally supplied `RJPOS_TERMINAL_TOKEN`. Never commit the token.
 
+Assisted invoice receiving is available under Back Office → Invoice receiving. Image/PDF uploads are accepted, but production deliberately reports OCR unavailable until a provider adapter is configured. Development can use `RJPOS_INVOICE_OCR_PROVIDER=fixture` and upload `docs/phase-7/invoice-ocr-fixture.json`; extraction remains a draft until an owner or manager reviews product matches and confirms ledger-backed receiving.
+
 Create a custom-format development database backup with `pnpm backup:database`. The default repository-local `backups/` folder is Git-ignored and retains 14 days. Restore validation is deliberately restricted to a database ending in `_restore_test`:
 
 ```powershell
