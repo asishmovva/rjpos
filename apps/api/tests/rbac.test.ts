@@ -85,3 +85,11 @@ describe('Phase 3 query validation', () => {
     await expect(controller.shifts({} as never, { page: 'abc' })).rejects.toMatchObject({ status: 400 });
   });
 });
+
+describe('Phase 6 reporting authorization', () => {
+  it('allows Owner and Manager reporting/export while denying Cashier', () => {
+    for (const role of ['OWNER', 'MANAGER']) expect(rolePermissions[role]).toEqual(expect.arrayContaining(['report:read', 'report:export']));
+    expect(rolePermissions.CASHIER).not.toContain('report:read');
+    expect(rolePermissions.CASHIER).not.toContain('report:export');
+  });
+});

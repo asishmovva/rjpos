@@ -633,6 +633,7 @@ model RegisterSession {
   @@unique([organizationId, id])
   @@unique([organizationId, registerId, id])
   @@index([organizationId, registerId, status])
+  @@index([organizationId, storeId, openedAt], map: "RegisterSession_reporting_period_idx")
 }
 
 model Customer {

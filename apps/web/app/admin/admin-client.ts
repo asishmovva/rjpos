@@ -94,8 +94,13 @@ export type Dashboard = {
   salesMinor: string;
   transactions: number;
   refundMinor: string;
+  averageTransactionMinor: string;
   openRegisters: number;
   lowStockProducts: number;
+  topProducts: Array<{ label: string; quantitySold: number; revenueMinor: string }>;
+  outstandingPurchaseOrders: number;
+  from: string;
+  to: string;
   asOf: string;
 };
 export type Shift = {
@@ -416,7 +421,7 @@ const json = (method: 'POST' | 'PATCH', body: unknown): RequestInit => ({
 });
 
 export const adminApi = {
-  dashboard: (storeId?: string) => adminRequest<Dashboard>(`/dashboard${query({ storeId })}`),
+  dashboard: (storeId?: string, from?: string, to?: string) => adminRequest<Dashboard>(`/dashboard${query({ storeId, from, to })}`),
   categories: (search = '') => adminRequest<PageResult<Category>>(`/categories${query({ search, pageSize: 100 })}`),
   createCategory: (name: string) => adminRequest<Category>('/categories', json('POST', { name })),
   updateCategory: (id: string, body: { name?: string; active?: boolean }) => adminRequest<Category>(`/categories/${id}`, json('PATCH', body)),

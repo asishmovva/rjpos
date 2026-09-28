@@ -156,6 +156,7 @@ export default function AdminPage(): React.ReactNode {
           <strong>Back Office</strong>
         </a>
         <nav aria-label="Back-office navigation">
+          <a className="register-link" href="/admin/reports">Reports &amp; exports</a>
           {areas.map((item) => (
             <button className={area === item ? 'active' : ''} key={item} onClick={() => switchArea(item)}>
               {item}
@@ -231,21 +232,38 @@ export default function AdminPage(): React.ReactNode {
 function DashboardView({ data }: { data?: Dashboard }): React.ReactNode {
   if (!data) return <Empty label="No dashboard data is available." />;
   const cards = [
-    ['Today’s sales', money(data.salesMinor)],
+    ['Net sales', money(data.salesMinor)],
     ['Transactions', data.transactions],
+    ['Average sale', money(data.averageTransactionMinor)],
     ['Refund total', money(data.refundMinor)],
     ['Open registers', data.openRegisters],
     ['Low-stock products', data.lowStockProducts],
+    ['Outstanding POs', data.outstandingPurchaseOrders],
   ];
   return (
-    <div className="metric-grid">
-      {cards.map(([label, value]) => (
-        <article key={label}>
-          <span>{label}</span>
-          <strong>{value}</strong>
-        </article>
-      ))}
-    </div>
+    <>
+      <div className="metric-grid">
+        {cards.map(([label, value]) => (
+          <article key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </article>
+        ))}
+      </div>
+      <p className="hint">Period: {data.from} through {data.to} · <a href="/admin/reports">Open full reports &amp; exports</a></p>
+      {data.topProducts.length > 0 && (
+        <div className="admin-table-wrap">
+          <table>
+            <thead><tr><th>Top product</th><th>Quantity sold</th><th>Revenue</th></tr></thead>
+            <tbody>
+              {data.topProducts.map((row) => (
+                <tr key={row.label}><td>{row.label}</td><td>{row.quantitySold}</td><td>{money(row.revenueMinor)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
   );
 }
 

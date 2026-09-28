@@ -67,8 +67,8 @@ export class BackOfficeController {
   }
 
   @Get('dashboard')
-  async dashboard(@Req() request: TenantRequest, @Query('storeId') storeId?: string) {
-    return getDashboard(this.prisma, await this.actor(request, 'dashboard:read'), storeId);
+  async dashboard(@Req() request: TenantRequest, @Query('storeId') storeId?: string, @Query('from') from?: string, @Query('to') to?: string) {
+    return getDashboard(this.prisma, await this.actor(request, 'dashboard:read'), { ...(storeId ? { storeId } : {}), ...(from ? { from } : {}), ...(to ? { to } : {}) });
   }
 
   @Get('categories')

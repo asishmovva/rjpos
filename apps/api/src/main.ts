@@ -29,6 +29,7 @@ import { BackOfficeController } from './back-office.js';
 import { PhaseThreeController } from './phase-three.js';
 import { PurchasingController } from './purchasing.js';
 import { PhaseFiveController } from './phase-five.js';
+import { ReportingController } from './reporting.js';
 
 const environment = loadEnvironment();
 const prisma = new PrismaClient({
@@ -36,7 +37,7 @@ const prisma = new PrismaClient({
 });
 
 @Module({
-  controllers: [HealthController, CorePosController, BackOfficeController, PhaseThreeController, PurchasingController, PhaseFiveController],
+  controllers: [HealthController, CorePosController, BackOfficeController, PhaseThreeController, PurchasingController, PhaseFiveController, ReportingController],
   providers: [
     HealthService,
     TenantContextService,
