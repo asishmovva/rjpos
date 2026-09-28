@@ -20,7 +20,7 @@ Zero-test tasks are not counted as behavioral validation.
 | --- | ---: | --- |
 | `@rjpos/api` | 27 | RBAC, health/error handling, and production-shaped API workflows |
 | `@rjpos/database` | 57 | Quick Keys, idempotent hold/resume, price revalidation, tenant isolation, and audit attribution |
-| `@rjpos/web` | 18 | Touch register, HID scanner, Quick Key, and hold feedback |
+| `@rjpos/web` | 21 | Touch register, HID scanner, Quick Key, hold feedback, product-result selection, empty-response recovery, and inventory/clock controls |
 | `@rjpos/register` | 9 | Secure BrowserWindow/preload and printer/drawer adapters |
 | `@rjpos/payment-contracts` | 14 | Terminal states, HTTPS/credential validation, and unknown/no-retry behavior |
 | `@rjpos/config` | 10 | Environment and isolated test-database validation |
@@ -60,3 +60,7 @@ Production-mode API startup was exercised on port 3101. `/api/v1/health` returne
 ## Production decision
 
 The software/package boundary is suitable for a controlled pilot using the documented simulated/unavailable hardware configuration. Live-store deployment remains **NO-GO** until a production identity-provider adapter, certified terminal credentials/device, store-specific printer/drawer adapter, physical-device acceptance test, and Windows code-signing certificate are supplied and validated. Development-header authentication is not evidence of production identity integration.
+
+## Post-QA register regression correction
+
+A production-mode API process left on development port 3001 rejected the Next.js development origin, making register controls appear inert. Verification now explicitly confirms the process bound to port 3001 is the development candidate and that its preflight/response includes `Access-Control-Allow-Origin: http://localhost:3000`. The register client also accepts empty successful current-shift/session responses, restores stale open-register/clock-in state on action, and renders live product-search matches in a selectable dropdown.

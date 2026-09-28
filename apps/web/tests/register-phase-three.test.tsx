@@ -67,4 +67,22 @@ describe('Phase 3 register workflow', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Close register' })).toBeTruthy());
     expect(screen.getByText('Existing register session restored. Ready to sell.')).toBeTruthy();
   });
+
+  it('treats empty successful current-state responses as no active shift or register', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/workforce/current') || url.endsWith('/register-sessions/current')) {
+        return { ok: true, status: 200, text: async () => '' } as Response;
+      }
+      if (url.endsWith('/store/current')) return response({ taxRateBasisPoints: 0 });
+      if (url.endsWith('/workforce/clock-in') && init?.method === 'POST') return response({ id: 'shift-1', clockedOutAt: null });
+      return response([]);
+    }));
+
+    const user = userEvent.setup();
+    render(<Register />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /Open register/ })).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Clock in' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Clock out' })).toBeTruthy());
+  });
 });

@@ -80,9 +80,11 @@ function money(value: bigint | string): string {
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     const response = await fetch(`${API}${path}`, { ...init, headers: { 'content-type': 'application/json', ...init?.headers }, signal: init?.signal ?? AbortSignal.timeout(10_000) });
-    const body = (await response.json()) as T & { error?: { code: string } };
-    if (!response.ok) throw new Error(body.error?.code ?? `HTTP_${response.status}`);
-    return body;
+    const body = (typeof response.text === 'function'
+      ? await response.text().then((text) => text ? JSON.parse(text) : null)
+      : await response.json()) as T & { error?: { code: string } } | null;
+    if (!response.ok) throw new Error(body?.error?.code ?? `HTTP_${response.status}`);
+    return body as T;
   } catch (error) {
     if (error instanceof TypeError || (error instanceof DOMException && error.name === 'TimeoutError')) throw new Error('Register cannot reach the server. No sale was recorded.');
     throw error;
@@ -92,6 +94,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export default function Register(): React.ReactNode {
   const [sessionId, setSessionId] = useState('');
   const [query, setQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<CatalogItem[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [message, setMessage] = useState('Open the register to begin selling.');
   const [ageVerified, setAgeVerified] = useState(false);
@@ -203,6 +206,36 @@ export default function Register(): React.ReactNode {
     });
     setMessage(`${item.productName} added.`);
   }, []);
+  useEffect(() => {
+    const value = query.trim();
+    if (value.length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void api<CatalogItem[]>(`/catalog/lookup?search=${encodeURIComponent(value)}`)
+        .then((items) => {
+          if (active) setSearchResults(items);
+        })
+        .catch((error) => {
+          if (active) {
+            setSearchResults([]);
+            setMessage(error instanceof Error ? error.message : 'Product search failed');
+          }
+        });
+    }, 180);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [query]);
+  function selectSearchResult(item: CatalogItem): void {
+    addItem(item);
+    setQuery('');
+    setSearchResults([]);
+    scanInput.current?.focus();
+  }
   async function lookupValue(rawValue = query): Promise<void> {
     const value = rawValue.trim();
     if (!value) return;
@@ -216,7 +249,11 @@ export default function Register(): React.ReactNode {
       else if (exact.length === 1) {
         addItem(items[0]);
         setQuery('');
-      } else setMessage(`${items.length} matches. Enter an exact UPC or SKU to add.`);
+        setSearchResults([]);
+      } else {
+        setSearchResults(items);
+        setMessage(`${items.length} matches. Choose an item below.`);
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Lookup failed');
     }
@@ -239,6 +276,12 @@ export default function Register(): React.ReactNode {
   });
   async function openRegister(): Promise<void> {
     try {
+      const existing = await api<{ id: string; status: 'OPEN' | 'CLOSING' } | null>('/register-sessions/current');
+      if (existing?.status === 'OPEN') {
+        setSessionId(existing.id);
+        setMessage('Existing register session restored. Ready to sell.');
+        return;
+      }
       const [session, store] = await Promise.all([
         api<{ id: string }>('/register-sessions/open', {
           method: 'POST',
@@ -352,6 +395,14 @@ export default function Register(): React.ReactNode {
   }
   async function toggleClock(): Promise<void> {
     try {
+      if (!clockedIn) {
+        const existing = await api<{ clockedOutAt: string | null } | null>('/workforce/current');
+        if (existing?.clockedOutAt === null) {
+          setClockedIn(true);
+          setMessage('Existing clock-in restored.');
+          return;
+        }
+      }
       const shift = await api<{ clockedOutAt: string | null }>(`/workforce/${clockedIn ? 'clock-out' : 'clock-in'}`, { method: 'POST', body: '{}' });
       const active = shift.clockedOutAt === null;
       setClockedIn(active);
@@ -468,11 +519,29 @@ export default function Register(): React.ReactNode {
                   onChange={(event) => setQuery(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') void lookupValue();
+                    if (event.key === 'Escape') {
+                      setQuery('');
+                      setSearchResults([]);
+                    }
                   }}
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={searchResults.length > 0}
+                  aria-controls="product-search-results"
                   placeholder="Scan barcode…"
                 />
                 <button onClick={() => void lookupValue()}>Find</button>
               </div>
+              {searchResults.length > 0 && (
+                <div className="product-search-results" id="product-search-results" role="listbox" aria-label="Product search results">
+                  {searchResults.map((item) => (
+                    <button key={item.variantId} role="option" aria-selected="false" onClick={() => selectSearchResult(item)}>
+                      <span><strong>{item.productName}</strong><small>{item.variantName} · {item.sku}{item.barcode ? ` · ${item.barcode}` : ''}</small></span>
+                      <b>{item.priceMinor === null ? 'No price' : money(item.priceMinor)}</b>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="cart-head">
               <h2>Current sale</h2>
