@@ -156,6 +156,7 @@ export default function AdminPage(): React.ReactNode {
           <strong>Back Office</strong>
         </a>
         <nav aria-label="Back-office navigation">
+          <a className="register-link" href="/admin/register-settings">Register &amp; hardware</a>
           <a className="register-link" href="/admin/reports">Reports &amp; exports</a>
           {areas.map((item) => (
             <button className={area === item ? 'active' : ''} key={item} onClick={() => switchArea(item)}>

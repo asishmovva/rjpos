@@ -1,5 +1,6 @@
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import {
+  HttpTerminalProvider,
   paymentAttemptStatuses,
   SimulatedTerminalProvider,
   type PaymentAttemptStatus,
@@ -41,6 +42,19 @@ describe('provider-neutral payment contracts', () => {
       'authorize' | 'cancel' | 'getStatus' | 'refund'
     >();
     expectTypeOf<'provider' extends keyof TerminalPaymentCommand ? true : false>().toEqualTypeOf<false>();
+  });
+});
+
+describe('real terminal HTTP adapter boundary', () => {
+  it('maps network uncertainty to UNKNOWN without retrying or exposing credentials', async () => {
+    const fetcher = vi.fn(async () => { throw new Error('offline'); }) as unknown as typeof fetch;
+    const provider = new HttpTerminalProvider({ endpoint: 'https://terminal.example.test', token: 'secret-token', timeoutMilliseconds: 10 }, fetcher);
+    await expect(provider.authorize({ attemptId: 'a1', amountMinor: '100', currency: 'USD', idempotencyKey: 'k1' })).resolves.toEqual({ status: 'UNKNOWN', failureCode: 'PROVIDER_UNREACHABLE' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it('requires HTTPS and credentials', () => {
+    expect(() => new HttpTerminalProvider({ endpoint: 'http://terminal.example.test', token: 'x' })).toThrow('TERMINAL_ENDPOINT_HTTPS_REQUIRED');
+    expect(() => new HttpTerminalProvider({ endpoint: 'https://terminal.example.test', token: '' })).toThrow('TERMINAL_CREDENTIAL_REQUIRED');
   });
 });
 

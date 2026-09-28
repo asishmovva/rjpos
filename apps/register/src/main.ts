@@ -1,5 +1,9 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, net, protocol, session } from 'electron';
 import path from 'node:path';
+import { writeFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { CallbackReceiptPrinter, SimulatedCashDrawer, UnavailableCashDrawer } from './hardware-adapters.js';
+import type { ReceiptDocument } from '@rjpos/hardware-contracts';
 import {
   loadRegisterEnvironment,
   resolveRendererTarget,
@@ -8,6 +12,39 @@ import {
 import { secureWebPreferences } from './security.js';
 
 let mainWindow: BrowserWindow | null = null;
+const PACKAGED_RENDERER_ORIGIN = 'rjpos://app';
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'rjpos',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+]);
+const environment = loadRegisterEnvironment();
+const hardwareMode = environment.RJPOS_HARDWARE_MODE === 'simulated' ? 'simulated' : 'unavailable';
+const apiUrl = (environment.RJPOS_API_URL || 'http://127.0.0.1:3001/api/v1').replace(/\/$/, '');
+const drawer = hardwareMode === 'simulated' ? new SimulatedCashDrawer() : new UnavailableCashDrawer();
+
+function escapeHtml(value: string): string { return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!); }
+async function fetchReceipt(orderId: string): Promise<ReceiptDocument> {
+  if (!/^[0-9a-f-]{36}$/i.test(orderId)) throw new Error('INVALID_ORDER_ID');
+  const response = await fetch(`${apiUrl}/orders/${orderId}/receipt`, { headers: { 'x-rjpos-role': 'OWNER' }, signal: AbortSignal.timeout(5_000) });
+  if (!response.ok) throw new Error(`RECEIPT_API_${response.status}`);
+  const receipt = await response.json() as { orderNumber: string; totalMinor: string; currency: string; store: { name: string }; items: Array<{ productNameSnapshot: string; variantNameSnapshot: string; quantity: number; totalMinor: string }> };
+  return { orderNumber: receipt.orderNumber, storeName: receipt.store.name, totalMinor: receipt.totalMinor, currency: receipt.currency, lines: receipt.items.map((item) => ({ label: `${item.productNameSnapshot} ${item.variantNameSnapshot}`, quantity: item.quantity, totalMinor: item.totalMinor })) };
+}
+const printer = new CallbackReceiptPrinter(hardwareMode, async (receipt) => {
+  if (hardwareMode === 'simulated') return;
+  const printWindow = new BrowserWindow({ show: false, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  const lines = receipt.lines.map((line) => `<tr><td>${line.quantity} × ${escapeHtml(line.label)}</td><td>${escapeHtml(line.totalMinor)}</td></tr>`).join('');
+  await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<html><body><h2>${escapeHtml(receipt.storeName)}</h2><p>${escapeHtml(receipt.orderNumber)}</p><table>${lines}</table><h3>Total ${escapeHtml(receipt.totalMinor)} ${escapeHtml(receipt.currency)}</h3></body></html>`)}`);
+  await new Promise<void>((resolve, reject) => printWindow.webContents.print({ silent: true, printBackground: true }, (success, failureReason) => success ? resolve() : reject(new Error(failureReason || 'PRINTER_FAILED'))));
+  printWindow.destroy();
+});
 
 function reportStartupFailure(error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
@@ -18,14 +55,19 @@ async function runSmokeVerification(
   window: BrowserWindow,
   securityPreferences: ReturnType<typeof secureWebPreferences>,
 ): Promise<void> {
-  if (!process.argv.includes('--smoke-test')) return;
+  if (!process.argv.includes('--smoke-test') && process.env.RJPOS_SMOKE_TEST !== '1') return;
 
   const result = (await window.webContents.executeJavaScript(`
-    (async () => ({
-      heading: document.querySelector('h1')?.textContent ?? null,
-      hardwareStatus: (await window.rjpos.hardwareStatus()).status,
-    }))()
-  `)) as { heading: string | null; hardwareStatus: string };
+    (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      return {
+        heading: document.querySelector('h1')?.textContent ?? null,
+        rendererOrigin: location.origin,
+        serverStatus: Array.from(document.querySelectorAll('.status')).map((element) => element.textContent?.trim()).find((value) => value?.startsWith('Server')) ?? null,
+        hardwareStatus: (await window.rjpos.hardwareStatus()).printer,
+      };
+    })()
+  `)) as { heading: string | null; rendererOrigin: string; serverStatus: string | null; hardwareStatus: string };
   const smokeResult = {
     ...result,
     bounds: window.getBounds(),
@@ -36,10 +78,19 @@ async function runSmokeVerification(
       sandbox: securityPreferences.sandbox,
     },
   };
+  const smokeResultPath = process.env.RJPOS_SMOKE_RESULT_PATH;
+  if (smokeResultPath) {
+    writeFileSync(smokeResultPath, `${JSON.stringify(smokeResult)}\n`, {
+      encoding: 'utf8',
+      flag: 'w',
+    });
+  }
   console.log(`RJPOS_REGISTER_SMOKE ${JSON.stringify(smokeResult)}`);
   app.exit(
     result.heading === 'Downtown Register' &&
-      result.hardwareStatus === 'simulated' &&
+      result.rendererOrigin === PACKAGED_RENDERER_ORIGIN &&
+      result.serverStatus === 'Server online' &&
+      ['simulated', 'unavailable'].includes(result.hardwareStatus) &&
       securityPreferences.contextIsolation === true &&
       securityPreferences.nodeIntegration === false &&
       securityPreferences.sandbox === true
@@ -67,13 +118,17 @@ async function createWindow(): Promise<void> {
   });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
+  const rendererFile = app.isPackaged ? path.join(process.resourcesPath, 'renderer', 'index.html') : path.join(import.meta.dirname, 'renderer.html');
   const rendererTarget = resolveRendererTarget(
     app.isPackaged,
-    path.join(import.meta.dirname, 'renderer.html'),
-    loadRegisterEnvironment(),
+    rendererFile,
+    environment,
   );
   if (rendererTarget.type === 'file') {
-    await window.loadFile(rendererTarget.value);
+    window.webContents.on('will-navigate', (event, navigationUrl) => {
+      if (!navigationUrl.startsWith(`${PACKAGED_RENDERER_ORIGIN}/`)) event.preventDefault();
+    });
+    await window.loadURL(`${PACKAGED_RENDERER_ORIGIN}/index.html`);
   } else {
     const allowedOrigin = new URL(rendererTarget.value).origin;
     window.webContents.on('will-navigate', (event, navigationUrl) => {
@@ -94,11 +149,47 @@ async function createWindow(): Promise<void> {
   await runSmokeVerification(window, securityPreferences);
 }
 
-ipcMain.handle('hardware:status', () => ({ status: 'simulated' as const }));
+ipcMain.handle('hardware:status', async () => ({ scanner: 'ready' as const, printer: await printer.status(), drawer: await drawer.status(), terminal: hardwareMode }));
+ipcMain.handle('hardware:print-receipt', async (_event, orderId: unknown) => {
+  try { return await printer.print(await fetchReceipt(String(orderId))); }
+  catch (error) { reportStartupFailure(error); return { ok: false, status: 'error', code: 'PRINT_FAILED', message: 'Receipt could not be printed. Check the printer and try again.', retryable: true }; }
+});
+ipcMain.handle('hardware:test-printer', async () => printer.print({ orderNumber: 'HARDWARE-TEST', storeName: 'RJ POS', totalMinor: '0', currency: 'USD', lines: [{ label: 'Printer test successful', quantity: 1, totalMinor: '0' }] }));
+ipcMain.handle('hardware:open-drawer', async (_event, request: unknown) => {
+  try {
+    const value = request && typeof request === 'object' ? request as { reason?: unknown; orderId?: unknown } : {};
+    if (typeof value.orderId === 'string') {
+      const response = await fetch(`${apiUrl}/orders/${value.orderId}/receipt`, { headers: { 'x-rjpos-role': 'OWNER' }, signal: AbortSignal.timeout(5_000) });
+      if (!response.ok) throw new Error('DRAWER_SALE_NOT_FOUND');
+      const receipt = await response.json() as { payments?: Array<{ kind: string; status: string }> };
+      if (!receipt.payments?.some((payment) => payment.kind === 'CASH' && ['CAPTURED', 'REFUNDED'].includes(payment.status))) throw new Error('DRAWER_CASH_SALE_REQUIRED');
+    } else {
+      const reason = typeof value.reason === 'string' ? value.reason.trim() : '';
+      if (!reason) throw new Error('DRAWER_REASON_REQUIRED');
+      const authorization = await fetch(`${apiUrl}/register/manual-drawer-open`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-rjpos-role': 'OWNER' }, body: JSON.stringify({ reason }), signal: AbortSignal.timeout(5_000) });
+      if (!authorization.ok) throw new Error('DRAWER_NOT_AUTHORIZED');
+    }
+    return drawer.open();
+  } catch (error) { reportStartupFailure(error); return { ok: false, status: 'error', code: 'DRAWER_FAILED', message: 'Drawer could not be opened.', retryable: false }; }
+});
 
 void app
   .whenReady()
   .then(async () => {
+    if (app.isPackaged) {
+      const rendererRoot = path.resolve(process.resourcesPath, 'renderer');
+      protocol.handle('rjpos', (request) => {
+        const requestUrl = new URL(request.url);
+        const relativePath = decodeURIComponent(requestUrl.pathname).replace(/^\/+/, '') || 'index.html';
+        const rendererPath = path.resolve(rendererRoot, relativePath);
+        if (rendererPath !== rendererRoot && !rendererPath.startsWith(`${rendererRoot}${path.sep}`)) {
+          return new Response('Not found', { status: 404 });
+        }
+        return net.fetch(pathToFileURL(rendererPath).toString());
+      });
+    }
+    session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    session.defaultSession.setPermissionCheckHandler(() => false);
     await createWindow();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {

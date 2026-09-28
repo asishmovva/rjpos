@@ -39,6 +39,7 @@ export type Store = {
 export type InventoryRow = {
   id: string;
   storeId: string;
+  variantId: string;
   onHand: number;
   reserved: number;
   available: number;

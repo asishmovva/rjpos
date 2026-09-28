@@ -120,6 +120,16 @@ export {
   type PromotionInput,
 } from './phase-five.js';
 export {
+  cancelHeldTransaction,
+  holdTransaction,
+  listHeldTransactions,
+  listQuickKeys,
+  listQuickKeysAdmin,
+  resumeHeldTransaction,
+  saveQuickKey,
+  type RegisterActor,
+} from './phase-seven.js';
+export {
   REPORT_KINDS,
   accountingExport,
   getReport,

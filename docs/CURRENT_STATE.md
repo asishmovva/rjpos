@@ -1,10 +1,10 @@
 # Current State
 
-Updated: 2026-09-27
+Updated: 2026-09-28
 
 ## Phase
 
-Phases 0-5 are merged into `main`. Phase 6 adds a server-authoritative reporting/analytics engine (sales, products, inventory, purchasing, employees, customers, gift cards, promotions), a period-aware dashboard upgrade, CSV export, a provider-neutral accounting-export boundary, a dedicated `/admin/reports` workspace, and reporting RBAC. Phase 6 is implemented on `phase-6` for review and is not merged.
+Phases 0-6 are merged into `main`. Phase 7 adds the touch-first register, Quick Keys, held transactions, cashier utilities, hardened Electron hardware IPC/adapters, a real-terminal adapter boundary, Windows packaging, outage/recovery UX, production security controls, and tested PostgreSQL backup/restore. Phase 7 is implemented on `phase-7` for review and is not merged.
 
 ## Delivered
 
@@ -44,6 +44,13 @@ Phases 0-5 are merged into `main`. Phase 6 adds a server-authoritative reporting
 - CSV export for every report kind (with CSV formula-injection protection) and a provider-neutral accounting-export JSON boundary composing sales, inventory, and purchasing data.
 - A period-aware dashboard upgrade (net sales, transactions, average sale, refunds, top products, outstanding purchase orders) built on the same reporting engine, and a dedicated `/admin/reports` workspace with report/date/store filters.
 - `report:read`/`report:export` RBAC restricted to Owner/Manager, and a `RegisterSession` reporting-period index added only where a report query needed it.
+- Touch-first register controls, grouped per-store/register Quick Keys, focus-independent USB HID scanner capture, cash denomination keys, and direct cashier utility actions.
+- Idempotent PostgreSQL-held sales with cashier/register/customer attribution and authoritative pricing revalidation on resume.
+- Audited manager price overrides and manual drawer opens; cash-sale drawer authorization is derived from authoritative receipt payment state.
+- Allowlisted secure Electron printer/drawer IPC, controlled hardware availability/errors, and an authorized hardware settings workspace.
+- Provider-neutral HTTPS terminal adapter with no automatic retry for uncertain payments and no production simulated-success fallback.
+- Static packaged Next renderer, NSIS Windows installer, custom icon/metadata, restricted navigation/permissions, CORS allowlist, secure response headers, and practical rate limiting.
+- Guarded PostgreSQL custom-format backup/restore scripts with retention and isolated restore-test validation.
 
 ## Local Endpoint
 
@@ -51,4 +58,4 @@ RJ POS Docker Compose maps PostgreSQL to `127.0.0.1:15432` and Redis to `127.0.0
 
 ## Verification
 
-Phase 0 evidence remains in `docs/phase-0/final-qa.md`. Phase 1-5 evidence remains under their respective phase directories. Phase 6 implementation and QA evidence is under `docs/phase-6/`, including real PostgreSQL reporting-integration coverage and a purchasing-to-transfer-to-count-to-promotion-to-loyalty/gift-card-sale-to-refund-to-register-close-to-reports-to-CSV E2E. Real payment-provider, certified-hardware, payroll/scheduling, advanced loyalty/marketing, a specific accounting-vendor sync, automatic ordering, e-commerce, and advanced predictive analytics remain intentionally out of scope.
+Phase 0 evidence remains in `docs/phase-0/final-qa.md`; later evidence remains under each phase directory. Phase 7 implementation and QA evidence is under `docs/phase-7/`. Physical printer/drawer/terminal certification and Windows code signing remain manual prerequisites because no devices, provider credentials, SDK, or signing certificate were supplied.

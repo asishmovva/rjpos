@@ -93,3 +93,18 @@ describe('Phase 6 reporting authorization', () => {
     expect(rolePermissions.CASHIER).not.toContain('report:export');
   });
 });
+
+describe('Phase 7 register-operation authorization', () => {
+  it('limits Quick Key configuration, manual drawer opens, and price overrides to managers and owners', () => {
+    for (const role of ['OWNER', 'MANAGER']) {
+      expect(rolePermissions[role]).toEqual(expect.arrayContaining([
+        'quickkey:manage',
+        'drawer:open',
+        'price:override',
+      ]));
+    }
+    expect(rolePermissions.CASHIER).not.toContain('quickkey:manage');
+    expect(rolePermissions.CASHIER).not.toContain('drawer:open');
+    expect(rolePermissions.CASHIER).not.toContain('price:override');
+  });
+});

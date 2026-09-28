@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import './register.css';
 
 const API = process.env.NEXT_PUBLIC_RJPOS_API_URL ?? 'http://127.0.0.1:3001/api/v1';
 type CatalogItem = {
@@ -15,6 +16,7 @@ type CatalogItem = {
 };
 type CartLine = CatalogItem & { quantity: number };
 type Receipt = {
+  id: string;
   orderNumber: string;
   subtotalMinor: string;
   discountMinor: string;
@@ -32,6 +34,8 @@ type Receipt = {
     promotionNameSnapshot: string | null;
   }>;
 };
+type QuickKey = CatalogItem & { id: string; label: string; groupName: string; position: number };
+type HeldTransaction = { id: string; label: string; heldAt: string; cartJson: { lines: CartLine[]; customerId?: string; ageVerified?: boolean }; employee: { firstName: string; lastName: string }; customer: { name: string } | null };
 type CheckoutQuote = {
   subtotalMinor: string;
   discountMinor: string;
@@ -74,13 +78,15 @@ function money(value: bigint | string): string {
   }).format(Number(BigInt(value)) / 100);
 }
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API}${path}`, {
-    ...init,
-    headers: { 'content-type': 'application/json', ...init?.headers },
-  });
-  const body = (await response.json()) as T & { error?: { code: string } };
-  if (!response.ok) throw new Error(body.error?.code ?? `HTTP_${response.status}`);
-  return body;
+  try {
+    const response = await fetch(`${API}${path}`, { ...init, headers: { 'content-type': 'application/json', ...init?.headers }, signal: init?.signal ?? AbortSignal.timeout(10_000) });
+    const body = (await response.json()) as T & { error?: { code: string } };
+    if (!response.ok) throw new Error(body.error?.code ?? `HTTP_${response.status}`);
+    return body;
+  } catch (error) {
+    if (error instanceof TypeError || (error instanceof DOMException && error.name === 'TimeoutError')) throw new Error('Register cannot reach the server. No sale was recorded.');
+    throw error;
+  }
 }
 
 export default function Register(): React.ReactNode {
@@ -117,7 +123,18 @@ export default function Register(): React.ReactNode {
   const [clockedIn, setClockedIn] = useState(false);
   const [view, setView] = useState<'register' | 'inventory' | 'orders'>('register');
   const [quote, setQuote] = useState<CheckoutQuote | null>(null);
+  const [quickKeys, setQuickKeys] = useState<QuickKey[]>([]);
+  const [quickGroup, setQuickGroup] = useState('All');
+  const [heldTransactions, setHeldTransactions] = useState<HeldTransaction[]>([]);
+  const [utility, setUtility] = useState<'none' | 'resume' | 'discount' | 'drawer' | 'hardware'>('none');
+  const [cashTendered, setCashTendered] = useState('');
+  const [overrideReason, setOverrideReason] = useState('');
+  const [orderDiscount, setOrderDiscount] = useState('');
+  const [online, setOnline] = useState(true);
   const scanInput = useRef<HTMLInputElement>(null);
+  const scannerBuffer = useRef('');
+  const scannerAt = useRef(0);
+  const lastScan = useRef({ value: '', at: 0 });
   const localSubtotal = useMemo(() => cart.reduce((sum, line) => sum + BigInt(line.priceMinor ?? 0) * BigInt(line.quantity), 0n), [cart]);
   const subtotal = quote ? BigInt(quote.subtotalMinor) : localSubtotal;
   const discount = quote ? BigInt(quote.discountMinor) : 0n;
@@ -126,13 +143,15 @@ export default function Register(): React.ReactNode {
 
   useEffect(() => {
     void (async () => {
-      const [shiftResult, sessionResult, storeResult] = await Promise.allSettled([api<{ clockedOutAt: string | null } | null>('/workforce/current'), api<{ id: string; status: 'OPEN' | 'CLOSING' } | null>('/register-sessions/current'), api<{ taxRateBasisPoints: number }>('/store/current')]);
+      const [shiftResult, sessionResult, storeResult, keysResult] = await Promise.allSettled([api<{ clockedOutAt: string | null } | null>('/workforce/current'), api<{ id: string; status: 'OPEN' | 'CLOSING' } | null>('/register-sessions/current'), api<{ taxRateBasisPoints: number }>('/store/current'), api<QuickKey[]>('/quick-keys')]);
       if (shiftResult.status === 'fulfilled') setClockedIn(Boolean(shiftResult.value && shiftResult.value.clockedOutAt === null));
       if (sessionResult.status === 'fulfilled' && sessionResult.value?.status === 'OPEN') {
         setSessionId(sessionResult.value.id);
         setMessage('Existing register session restored. Ready to sell.');
       }
       if (storeResult.status === 'fulfilled') setTaxRate(storeResult.value.taxRateBasisPoints);
+      if (keysResult.status === 'fulfilled' && Array.isArray(keysResult.value)) setQuickKeys(keysResult.value);
+      setOnline([shiftResult, sessionResult, storeResult].some((result) => result.status === 'fulfilled'));
     })();
   }, []);
   useEffect(() => {
@@ -184,9 +203,12 @@ export default function Register(): React.ReactNode {
     });
     setMessage(`${item.productName} added.`);
   }, []);
-  async function lookup(): Promise<void> {
-    const value = query.trim();
+  async function lookupValue(rawValue = query): Promise<void> {
+    const value = rawValue.trim();
     if (!value) return;
+    const now = Date.now();
+    if (lastScan.current.value === value && now - lastScan.current.at < 35) return;
+    lastScan.current = { value, at: now };
     try {
       const exact = await api<CatalogItem[]>(`/catalog/lookup?barcode=${encodeURIComponent(value)}`);
       const items = exact.length ? exact : await api<CatalogItem[]>(`/catalog/lookup?search=${encodeURIComponent(value)}`);
@@ -200,6 +222,21 @@ export default function Register(): React.ReactNode {
     }
     scanInput.current?.focus();
   }
+  useEffect(() => {
+    const capture = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.matches('input, textarea, select') || event.ctrlKey || event.altKey || event.metaKey) return;
+      const now = Date.now();
+      if (now - scannerAt.current > 80) scannerBuffer.current = '';
+      scannerAt.current = now;
+      if (event.key === 'Enter') {
+        const value = scannerBuffer.current; scannerBuffer.current = '';
+        if (value.length >= 4) { event.preventDefault(); void lookupValue(value); }
+      } else if (event.key.length === 1) scannerBuffer.current += event.key;
+    };
+    window.addEventListener('keydown', capture);
+    return () => window.removeEventListener('keydown', capture);
+  });
   async function openRegister(): Promise<void> {
     try {
       const [session, store] = await Promise.all([
@@ -216,7 +253,7 @@ export default function Register(): React.ReactNode {
       setMessage(error instanceof Error ? error.message : 'Could not open register');
     }
   }
-  async function checkout(kind: 'cash' | 'terminal'): Promise<void> {
+  async function checkout(kind: 'cash' | 'terminal', tendered = total.toString()): Promise<void> {
     if (!sessionId) {
       setMessage('Open the register before checkout.');
       return;
@@ -231,14 +268,19 @@ export default function Register(): React.ReactNode {
             variantId: line.variantId,
             quantity: line.quantity,
           })),
+          ...(orderDiscount && BigInt(orderDiscount) > 0n ? { orderDiscount: { kind: 'FIXED', amountMinor: orderDiscount }, overrideReason } : {}),
           ageVerified,
           ...(customer ? { customerId: customer.id } : {}),
-          ...(kind === 'cash' ? { tenderedMinor: (total + 2000n).toString() } : { simulatedOutcome: 'APPROVED' }),
+          ...(kind === 'cash' ? { tenderedMinor: tendered } : { simulatedOutcome: 'APPROVED' }),
         }),
       });
       await finishSale(result.orderId);
+      if (kind === 'cash' && window.rjpos) {
+        const drawerResult = await window.rjpos.openDrawer({ orderId: result.orderId });
+        if (!drawerResult.ok) setMessage(`Sale complete. ${drawerResult.message}`);
+      }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Checkout failed');
+      setMessage(kind === 'terminal' && error instanceof Error && error.message.includes('cannot reach') ? 'Payment status is unknown. Do not retry until the order is checked.' : error instanceof Error ? error.message : 'Checkout failed');
     }
   }
   async function finishSale(orderId: string): Promise<void> {
@@ -249,6 +291,8 @@ export default function Register(): React.ReactNode {
     setLoyaltyPoints(0);
     setGiftCode('');
     setGiftAmount('0');
+    setOrderDiscount('');
+    setOverrideReason('');
     setMessage('Sale complete. Receipt ready to print.');
   }
   async function findCustomers(): Promise<void> {
@@ -345,6 +389,36 @@ export default function Register(): React.ReactNode {
       setMessage(error instanceof Error ? error.message : 'Could not close register');
     }
   }
+  async function holdSale(): Promise<void> {
+    if (!cart.length) { setMessage('Add an item before holding this sale.'); return; }
+    try {
+      await api('/held-transactions', { method: 'POST', body: JSON.stringify({ idempotencyKey: crypto.randomUUID(), label: customer?.name || `Cart · ${cart.length} item${cart.length === 1 ? '' : 's'}`, cart: { lines: cart, ...(customer ? { customerId: customer.id } : {}), ageVerified } }) });
+      setCart([]); setCustomer(null); setAgeVerified(false); setMessage('Sale held. You can resume it from this register.');
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not hold sale.'); }
+  }
+  async function showHeld(): Promise<void> {
+    try { setHeldTransactions(await api('/held-transactions')); setUtility('resume'); }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'Could not load held sales.'); }
+  }
+  async function resumeSale(id: string): Promise<void> {
+    try {
+      const result = await api<{ cart: { lines: CartLine[]; customerId?: string; ageVerified?: boolean }; pricingRevalidated: boolean }>(`/held-transactions/${id}/resume`, { method: 'POST', body: '{}' });
+      setCart(result.cart.lines); setAgeVerified(Boolean(result.cart.ageVerified)); setUtility('none'); setMessage('Held sale resumed. Prices and promotions were rechecked.');
+      if (result.cart.customerId) await selectCustomer({ id: result.cart.customerId, name: '', email: null, phone: null });
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not resume sale.'); }
+  }
+  async function manualDrawerOpen(): Promise<void> {
+    const reason = overrideReason.trim();
+    if (!reason) { setMessage('Enter a reason for the manual drawer open.'); return; }
+    if (!window.rjpos) { setMessage('Cash drawer controls are available in the register application.'); return; }
+    const result = await window.rjpos.openDrawer({ reason });
+    setMessage(result.message); if (result.ok) { setUtility('none'); setOverrideReason(''); }
+  }
+  async function printCurrentReceipt(): Promise<void> {
+    if (!receipt) return;
+    if (!window.rjpos) { window.print(); return; }
+    const result = await window.rjpos.printReceipt(receipt.id); setMessage(result.message);
+  }
 
   return (
     <main className="shell">
@@ -357,13 +431,15 @@ export default function Register(): React.ReactNode {
           <span />
           {sessionId ? 'Register open' : 'Register closed'}
         </div>
+        <div className={`status ${online ? 'open' : 'offline'}`}><span />{online ? 'Server online' : 'Server unavailable'}</div>
+        <div className="cashier-summary"><strong>Demo Owner</strong><small>{clockedIn ? 'Clocked in' : 'Clocked out'} · {customer?.name ?? 'Walk-in'}</small></div>
         <nav>
           <button onClick={() => setView('register')}>Register</button>
           <button onClick={() => void loadInventory()}>Inventory</button>
           <button onClick={() => void loadHistory()}>Orders</button>
         </nav>
       </header>
-      {view === 'register' && (
+      {view === 'register' && (<>
         <div className="register-grid">
           <section className="workspace">
             <div className="session-actions">
@@ -391,11 +467,11 @@ export default function Register(): React.ReactNode {
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   onKeyDown={(event) => {
-                    if (event.key === 'Enter') void lookup();
+                    if (event.key === 'Enter') void lookupValue();
                   }}
                   placeholder="Scan barcode…"
                 />
-                <button onClick={() => void lookup()}>Find</button>
+                <button onClick={() => void lookupValue()}>Find</button>
               </div>
             </div>
             <div className="cart-head">
@@ -457,6 +533,10 @@ export default function Register(): React.ReactNode {
             </div>
           </section>
           <aside className="checkout">
+            <section className="quick-keys" aria-label="Quick Keys">
+              <div className="quick-groups"><button className={quickGroup === 'All' ? 'active' : ''} onClick={() => setQuickGroup('All')}>All</button>{[...new Set(quickKeys.map((key) => key.groupName))].map((group) => <button className={quickGroup === group ? 'active' : ''} key={group} onClick={() => setQuickGroup(group)}>{group}</button>)}</div>
+              <div className="quick-grid">{quickKeys.filter((key) => quickGroup === 'All' || key.groupName === quickGroup).map((key) => <button key={key.id} disabled={!key.active || key.priceMinor === null} onClick={() => addItem(key)}><strong>{key.label}</strong><small>{key.priceMinor ? money(key.priceMinor) : 'No price'}</small></button>)}</div>
+            </section>
             <h2>Checkout</h2>
             <dl>
               <div>
@@ -530,12 +610,12 @@ export default function Register(): React.ReactNode {
                 <input type="checkbox" checked={ageVerified} onChange={(event) => setAgeVerified(event.target.checked)} />I verified the customer is of legal age.
               </label>
             )}
-            <button className="pay cash" disabled={!cart.length || !sessionId} onClick={() => void checkout('cash')}>
-              Take cash
-            </button>
-            <button className="pay card" disabled={!cart.length || !sessionId} onClick={() => void checkout('terminal')}>
-              Simulated terminal
-            </button>
+            <div className="payment-row">
+              <button className="pay card" disabled={!cart.length || !sessionId} onClick={() => void checkout('terminal')}>CARD</button>
+              <button className="pay cash" disabled={!cart.length || !sessionId} onClick={() => void checkout('cash', cashTendered || total.toString())}>CASH</button>
+              {[5, 10, 20, 50, 100].map((amount) => <button key={amount} disabled={!cart.length || !sessionId || BigInt(amount * 100) < total} onClick={() => { setCashTendered(String(amount * 100)); void checkout('cash', String(amount * 100)); }}>${amount}</button>)}
+              <button disabled={!cart.length || !sessionId} onClick={() => void checkout('cash', total.toString())}>EXACT</button>
+            </div>
             {(giftCode || loyaltyPoints > 0) && (
               <>
                 <button className="pay cash" disabled={!cart.length || !sessionId} onClick={() => void mixedCheckout('CASH')}>
@@ -549,7 +629,21 @@ export default function Register(): React.ReactNode {
             <small>Final pricing, benefits, and inventory are verified by the server.</small>
           </aside>
         </div>
-      )}
+        <div className="action-bar" aria-label="Register actions">
+          <button onClick={() => setUtility('discount')}>Discount / Price</button>
+          <button onClick={() => scanInput.current?.focus()}>Price Check</button>
+          <button onClick={() => document.querySelector<HTMLInputElement>('[aria-label="Customer search"]')?.focus()}>Customer</button>
+          <button className={ageVerified ? 'confirmed' : ''} onClick={() => setAgeVerified((value) => !value)}>Age Check</button>
+          <button onClick={() => void holdSale()}>Hold</button>
+          <button onClick={() => void showHeld()}>Resume</button>
+          <button className="danger" onClick={() => setCart([])}>Void Cart</button>
+          <button onClick={() => void loadHistory()}>Return</button>
+          <button disabled={!receipt} onClick={() => void printCurrentReceipt()}>Reprint</button>
+          <button onClick={() => setUtility('drawer')}>Drawer</button>
+          <button onClick={() => document.querySelector<HTMLInputElement>('[aria-label="Gift-card code"]')?.focus()}>Gift Card</button>
+          <button className="danger" onClick={() => void closeRegister()}>End Shift</button>
+        </div>
+      </>)}
       {view === 'inventory' && (
         <section className="management">
           <span className="eyebrow">Management</span>
@@ -580,6 +674,16 @@ export default function Register(): React.ReactNode {
           ))}
           <button onClick={() => setView('register')}>Back to register</button>
         </section>
+      )}
+      {utility !== 'none' && (
+        <div className="modal" role="dialog" aria-label={`${utility} utility`}>
+          <section className="utility-modal">
+            <button className="close" aria-label="Close" onClick={() => setUtility('none')}>×</button>
+            {utility === 'resume' && <><h2>Resume a held sale</h2>{heldTransactions.length === 0 ? <p>No held sales on this register.</p> : heldTransactions.map((held) => <button className="held-sale" key={held.id} onClick={() => void resumeSale(held.id)}><strong>{held.label}</strong><span>{new Date(held.heldAt).toLocaleTimeString()} · {held.employee.firstName} {held.employee.lastName}</span><small>{held.cartJson.lines.length} lines{held.customer ? ` · ${held.customer.name}` : ''}</small></button>)}</>}
+            {utility === 'discount' && <><h2>Manager price override</h2><p>The server records the reason and manager identity.</p><label>Discount amount, cents<input inputMode="numeric" aria-label="Override discount cents" value={orderDiscount} onChange={(event) => setOrderDiscount(event.target.value.replace(/\D/g, ''))} /></label><label>Required reason<input aria-label="Override reason" value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} /></label><button className="primary" disabled={!orderDiscount || !overrideReason.trim()} onClick={() => { setUtility('none'); setMessage('Price override ready. It will be audited when payment completes.'); }}>Apply to sale</button></>}
+            {utility === 'drawer' && <><h2>Manual drawer open</h2><p className="warning">Manager authorization and a reason are required. This action is audited.</p><label>Reason<input aria-label="Drawer reason" value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} /></label><button className="danger" onClick={() => void manualDrawerOpen()}>Authorize and open drawer</button></>}
+          </section>
+        </div>
       )}
       {receipt && (
         <div className="modal" role="dialog" aria-label="Receipt">
@@ -622,7 +726,7 @@ export default function Register(): React.ReactNode {
               <span>Total</span>
               <b>{money(receipt.totalMinor)}</b>
             </div>
-            <button className="primary" onClick={() => window.print()}>
+            <button className="primary" onClick={() => void printCurrentReceipt()}>
               Print receipt
             </button>
           </section>
