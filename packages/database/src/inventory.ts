@@ -182,3 +182,49 @@ export async function getInventorySnapshot(
     orderBy: { variant: { product: { name: 'asc' } } },
   });
 }
+
+export type InventorySearchInput = {
+  organizationId: string;
+  storeId: string;
+  search?: string;
+  categoryId?: string;
+  size?: string;
+  status?: 'in_stock' | 'low' | 'zero';
+  page?: number;
+  pageSize?: number;
+};
+
+/** Paged, filterable stock list for the register. Bounded: pageSize is capped at 100. */
+export async function searchInventory(prisma: PrismaClient, input: InventorySearchInput) {
+  const pageSize = Math.min(100, Math.max(1, Math.trunc(input.pageSize ?? 25)));
+  const page = Math.max(1, Math.trunc(input.page ?? 1));
+  const search = input.search?.trim();
+  const size = input.size?.trim();
+  const where: Prisma.InventoryLevelWhereInput = { organizationId: input.organizationId, storeId: input.storeId };
+  const variantFilters: Prisma.ProductVariantWhereInput[] = [];
+  if (search) variantFilters.push({ OR: [
+    { product: { name: { contains: search, mode: 'insensitive' } } },
+    { product: { brand: { contains: search, mode: 'insensitive' } } },
+    { sku: { contains: search, mode: 'insensitive' } },
+    { barcodes: { some: { barcodeValue: { contains: search } } } },
+  ] });
+  if (size) variantFilters.push({ name: { contains: size, mode: 'insensitive' } });
+  if (input.categoryId) variantFilters.push({ product: { categoryId: input.categoryId } });
+  if (variantFilters.length) where.variant = { AND: variantFilters };
+  if (input.status === 'zero') where.onHand = { lte: 0 };
+  else if (input.status === 'in_stock') where.onHand = { gt: 0 };
+  else if (input.status === 'low') {
+    // Column-to-column comparison needs SQL; the id list is bounded by this store's stock rows.
+    const rows = await prisma.$queryRaw<Array<{ id: string }>>`SELECT id FROM "InventoryLevel" WHERE "organizationId" = ${input.organizationId}::uuid AND "storeId" = ${input.storeId}::uuid AND "onHand" > 0 AND "onHand" <= "lowStockThreshold"`;
+    where.id = { in: rows.map((row) => row.id) };
+  }
+  const [items, total, categories] = await Promise.all([
+    prisma.inventoryLevel.findMany({
+      where, orderBy: [{ variant: { product: { name: 'asc' } } }, { variant: { name: 'asc' } }], skip: (page - 1) * pageSize, take: pageSize,
+      include: { variant: { select: { name: true, sku: true, product: { select: { name: true, category: { select: { name: true } } } }, barcodes: { select: { barcodeValue: true }, take: 1 } } } },
+    }),
+    prisma.inventoryLevel.count({ where }),
+    prisma.category.findMany({ where: { organizationId: input.organizationId, active: true }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+  ]);
+  return { items, total, page, pageSize, categories };
+}

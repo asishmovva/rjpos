@@ -4,6 +4,7 @@ import {
   adjustInventory,
   createCategory,
   createEmployee,
+  setEmployeePin,
   createProduct,
   createRegister,
   createStore,
@@ -159,7 +160,13 @@ export class BackOfficeController {
 
   @Post('employees')
   async addEmployee(@Req() request: TenantRequest, @Body() body: Parameters<typeof createEmployee>[2]) {
-    return createEmployee(this.prisma, await this.actor(request, 'employee:manage'), body);
+    return createEmployee(this.prisma, await this.actor(request, 'employee:manage'), body, this.tenants.require(request.tenantContext).permissions.has('settings:write'));
+  }
+
+  // Set or reset only: the current PIN is stored hashed and can never be read back. Owner/Manager PINs are Owner-managed.
+  @Post('employees/:employeeId/pin')
+  async resetPin(@Req() request: TenantRequest, @Param('employeeId') employeeId: string, @Body() body: { pin: string }) {
+    return setEmployeePin(this.prisma, await this.actor(request, 'employee:manage'), employeeId, body.pin, this.tenants.require(request.tenantContext).permissions.has('settings:write'));
   }
 
   @Patch('employees/:employeeId')

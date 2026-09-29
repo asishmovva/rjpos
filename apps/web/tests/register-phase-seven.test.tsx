@@ -3,12 +3,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Register from '../app/page.js';
+import { signInAs } from './session.js';
 
 const item = { variantId: 'variant-1', productName: 'Quick Whiskey', variantName: '750 ml', sku: 'QUICK-1', barcode: '012345678905', priceMinor: '1000', active: true, ageRestricted: false };
 const secondItem = { ...item, variantId: 'variant-2', productName: 'Quick Whiskey Reserve', sku: 'QUICK-2', barcode: '012345678912', priceMinor: '1400' };
 const response = (body: unknown): Response => ({ ok: true, status: 200, json: async () => body }) as Response;
 describe('Phase 7 touch register and HID scanning', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  beforeEach(() => { signInAs(); vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith('/workforce/current')) return response(null);
     if (url.endsWith('/register-sessions/current')) return response({ id: 'session-1', status: 'OPEN' });
@@ -16,16 +17,18 @@ describe('Phase 7 touch register and HID scanning', () => {
     if (url.endsWith('/quick-keys')) return response([{ ...item, id: 'key-1', label: 'Best seller', groupName: 'Popular', position: 0 }]);
     if (url.includes('/catalog/lookup?barcode=')) return response([item]);
     if (url.includes('/catalog/lookup?search=quick')) return response([item, secondItem]);
-    if (url.endsWith('/inventory')) return response([{ id: 'stock-1', onHand: 8, reserved: 2, variant: { name: '750 ml', sku: 'QUICK-1', product: { name: 'Quick Whiskey' } } }]);
+    if (url.includes('/inventory?')) return response({ total: 1, page: 1, pageSize: 25, categories: [{ id: 'cat-1', name: 'Whiskey' }], items: [{ id: 'stock-1', onHand: 8, reserved: 2, lowStockThreshold: 3, variant: { name: '750 ml', sku: 'QUICK-1', product: { name: 'Quick Whiskey', category: { name: 'Whiskey' } }, barcodes: [{ barcodeValue: '012345678905' }] } }] });
     if (url.endsWith('/workforce/clock-in') && init?.method === 'POST') return response({ id: 'shift-1', clockedOutAt: null });
     if (url.endsWith('/checkout/quote')) { const body = JSON.parse(String(init?.body)) as { lines: Array<{ quantity: number }> }; const amount = String(body.lines[0]!.quantity * 1000); return response({ subtotalMinor: amount, discountMinor: '0', taxMinor: '0', totalMinor: amount, lines: [{ variantId: 'variant-1', unitPriceMinor: '1000', quantity: body.lines[0]!.quantity, subtotalMinor: amount, discountMinor: '0', taxMinor: '0', totalMinor: amount, promotionName: null }] }); }
     if (url.endsWith('/held-transactions') && init?.method === 'POST') return response({ id: 'held-1' });
     if (url.endsWith('/orders')) return response([{ id: 'order-1', orderNumber: 'ORD-1', status: 'COMPLETED', totalMinor: '1000' }]);
     if (url.endsWith('/orders/order-1/receipt')) return response({ id: 'order-1', orderNumber: 'ORD-1', subtotalMinor: '1000', discountMinor: '0', taxMinor: '0', totalMinor: '1000', items: [{ id: 'item-1', productNameSnapshot: 'Quick Whiskey', variantNameSnapshot: '750 ml', quantity: 1, unitPriceMinor: '1000', subtotalMinor: '1000', discountMinor: '0', totalMinor: '1000', promotionNameSnapshot: null }], refunds: [] });
     if (url.endsWith('/orders/order-1/refund') && init?.method === 'POST') return response({ refundId: 'refund-1', status: 'SUCCEEDED' });
+    if (url.endsWith('/auth/approvers')) return response([{ id: 'manager-1', name: 'Demo Manager', role: 'MANAGER' }]);
+    if (url.endsWith('/auth/elevate') && init?.method === 'POST') return response({ token: 'elevation-token', expiresAt: new Date(Date.now() + 300_000).toISOString(), approver: { id: 'manager-1', name: 'Demo Manager', role: 'MANAGER' } });
     return response([]);
-  })));
-  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  })); });
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.sessionStorage.clear(); });
 
   it('adds Quick Keys with one touch and increments the same item', async () => {
     const user = userEvent.setup(); render(<Register />);
@@ -77,17 +80,37 @@ describe('Phase 7 touch register and HID scanning', () => {
     expect(screen.getByText('Quick Whiskey · 750 ml: $10.00.')).toBeTruthy();
   });
 
+  it('removes a cart line with the Remove button and reveals a confirm action on swipe without removing', async () => {
+    const user = userEvent.setup(); render(<Register />);
+    await user.click(await screen.findByRole('button', { name: /Best seller/ }));
+    const line = await screen.findByTestId('cart-line');
+    fireEvent.touchStart(line, { touches: [{ clientX: 10, clientY: 10 }] });
+    fireEvent.touchMove(line, { touches: [{ clientX: 140, clientY: 12 }] });
+    fireEvent.touchEnd(line);
+    expect(screen.getByTestId('cart-line').getAttribute('style')).toContain('translateX(132px)');
+    expect(screen.getByLabelText('Quantity')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Confirm remove Quick Whiskey' }));
+    await waitFor(() => expect(screen.queryByLabelText('Quantity')).toBeNull());
+    await user.click(await screen.findByRole('button', { name: /Best seller/ }));
+    await user.click(await screen.findByRole('button', { name: 'Remove Quick Whiskey' }));
+    await waitFor(() => expect(screen.queryByLabelText('Quantity')).toBeNull());
+  });
+
   it('keeps clock and inventory controls wired to their API operations', async () => {
     const user = userEvent.setup(); render(<Register />);
     await user.click(await screen.findByRole('button', { name: 'Clock in' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Clock out' })).toBeTruthy());
     await user.click(screen.getByRole('button', { name: 'Inventory' }));
-    expect(await screen.findByText('6 available')).toBeTruthy();
+    expect(await screen.findByText('Quick Whiskey')).toBeTruthy();
+    expect(screen.getByText('Showing 1–1 of 1')).toBeTruthy();
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/inventory?page=1&pageSize=25'))).toBe(true);
   });
 
   it('submits reviewed item-level returns through the refund API', async () => {
     const user = userEvent.setup(); render(<Register />);
     await user.click(await screen.findByRole('button', { name: 'Return' }));
+    await user.type(await screen.findByLabelText('Manager PIN'), '2468');
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
     await user.click(await screen.findByRole('button', { name: /ORD-1/ }));
     await user.clear(await screen.findByLabelText('Return quantity for Quick Whiskey'));
     await user.type(screen.getByLabelText('Return quantity for Quick Whiskey'), '1');
@@ -96,5 +119,6 @@ describe('Phase 7 touch register and HID scanning', () => {
     await waitFor(() => expect(screen.getByText('Return completed. Refund and stock movement were recorded.')).toBeTruthy());
     const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url).endsWith('/orders/order-1/refund') && init?.method === 'POST');
     expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ reason: 'Customer return', items: [{ orderItemId: 'item-1', quantity: 1, returnToStock: true }] });
+    expect((call?.[1]?.headers as Record<string, string>)['x-rjpos-elevation']).toBe('elevation-token');
   });
 });

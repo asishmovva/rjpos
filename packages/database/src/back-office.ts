@@ -1,4 +1,5 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { hashPin, verifyPin } from './pin.js';
 import { PosError } from './pos-errors.js';
 import { getReport, type ReportFilters } from './reporting.js';
 
@@ -359,14 +360,28 @@ export async function listInventoryMovements(prisma: PrismaClient, actor: AdminA
   return { items, page, pageSize, total };
 }
 
+const EMPLOYEE_INCLUDE = { roles: { include: { role: true } }, stores: { include: { store: true } } } as const;
+/** Never send the PIN hash to a client; expose only whether a PIN is set. */
+function publicEmployee<T extends { pinHash: string | null }>({ pinHash, ...employee }: T) { return { ...employee, hasPin: pinHash !== null }; }
+
+function requirePin(pin: string): string {
+  if (typeof pin !== 'string' || !/^\d{4,8}$/.test(pin)) throw new PosError('PIN_INVALID');
+  return pin;
+}
+/** Login identifies the employee by PIN alone, so an active PIN must be unique within the organization. */
+async function assertPinAvailable(prisma: PrismaClient | Prisma.TransactionClient, organizationId: string, pin: string, exceptEmployeeId?: string): Promise<void> {
+  const others = await prisma.employee.findMany({ where: { organizationId, pinHash: { not: null }, ...(exceptEmployeeId ? { id: { not: exceptEmployeeId } } : {}) }, select: { pinHash: true } });
+  if (others.some((other) => verifyPin(pin, other.pinHash))) throw new PosError('PIN_ALREADY_IN_USE', 409);
+}
+
 export async function listEmployees(prisma: PrismaClient, actor: AdminActor, input: PageInput & { search?: string | undefined; status?: 'ACTIVE' | 'INACTIVE' | undefined }) {
   const { page, pageSize, skip } = pageArgs(input); const query = clean(input.search);
   const where: Prisma.EmployeeWhereInput = { organizationId: actor.organizationId,
     ...(input.status ? { status: input.status } : {}), ...(query ? { OR: [{ firstName: { contains: query, mode: 'insensitive' } }, { lastName: { contains: query, mode: 'insensitive' } }] } : {}) };
-  const [items, total] = await Promise.all([
-    prisma.employee.findMany({ where, include: { roles: { include: { role: true } }, stores: { include: { store: true } } }, orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }], skip, take: pageSize }),
+  const [rows, total] = await Promise.all([
+    prisma.employee.findMany({ where, include: EMPLOYEE_INCLUDE, orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }], skip, take: pageSize }),
     prisma.employee.count({ where }),
-  ]); return { items, page, pageSize, total };
+  ]); return { items: rows.map(publicEmployee), page, pageSize, total };
 }
 
 async function validateAssignments(prisma: PrismaClient | Prisma.TransactionClient, actor: AdminActor, roleNames: string[], storeIds: string[]) {
@@ -382,17 +397,36 @@ async function validateAssignments(prisma: PrismaClient | Prisma.TransactionClie
   return roles;
 }
 
-export async function createEmployee(prisma: PrismaClient, actor: AdminActor, input: { firstName: string; lastName: string; roleNames: string[]; storeIds: string[] }) {
+export async function createEmployee(prisma: PrismaClient, actor: AdminActor, input: { firstName: string; lastName: string; roleNames: string[]; storeIds: string[]; pin?: string }, allowElevatedPin = false) {
   const roles = await validateAssignments(prisma, actor, input.roleNames, input.storeIds);
+  const pin = input.pin ? requirePin(input.pin) : undefined;
+  if (pin) {
+    if (input.roleNames.some((role) => role !== 'CASHIER') && !allowElevatedPin) throw new PosError('PIN_RESET_REQUIRES_OWNER', 403);
+    await assertPinAvailable(prisma, actor.organizationId, pin);
+  }
   return prisma.$transaction(async (tx) => {
     const created = await tx.employee.create({ data: { organizationId: actor.organizationId, firstName: required(input.firstName, 'EMPLOYEE_FIRST_NAME_REQUIRED'),
-      lastName: required(input.lastName, 'EMPLOYEE_LAST_NAME_REQUIRED') } });
+      lastName: required(input.lastName, 'EMPLOYEE_LAST_NAME_REQUIRED'), ...(pin ? { pinHash: hashPin(pin) } : {}) } });
     await tx.employeeRole.createMany({ data: roles.map((role) => ({ organizationId: actor.organizationId, employeeId: created.id, roleId: role.id })) });
     await tx.employeeStore.createMany({ data: [...new Set(input.storeIds)].map((storeId) => ({ organizationId: actor.organizationId, employeeId: created.id, storeId })) });
     const employee = await tx.employee.findUniqueOrThrow({ where: { id: created.id }, include: { roles: { include: { role: true } }, stores: { include: { store: true } } } });
     await audit(tx, actor, { action: 'EMPLOYEE_CREATED', entityType: 'Employee', entityId: employee.id,
-      after: { firstName: employee.firstName, lastName: employee.lastName, roles: input.roleNames, storeIds: input.storeIds } });
-    return employee;
+      after: { firstName: employee.firstName, lastName: employee.lastName, roles: input.roleNames, storeIds: input.storeIds, pinSet: Boolean(pin) } });
+    return publicEmployee(employee);
+  });
+}
+
+/** Sets or resets a PIN. The PIN is hashed and never returned or logged; managing Owner/Manager PINs is Owner-only. */
+export async function setEmployeePin(prisma: PrismaClient, actor: AdminActor, employeeId: string, rawPin: string, allowElevatedTarget: boolean) {
+  const pin = requirePin(rawPin);
+  const employee = await prisma.employee.findFirst({ where: { id: employeeId, organizationId: actor.organizationId }, include: { roles: { include: { role: true } } } });
+  if (!employee) throw new PosError('EMPLOYEE_NOT_FOUND', 404);
+  if (!allowElevatedTarget && employee.roles.some(({ role }) => role.name.toUpperCase() !== 'CASHIER')) throw new PosError('PIN_RESET_REQUIRES_OWNER', 403);
+  await assertPinAvailable(prisma, actor.organizationId, pin, employeeId);
+  return prisma.$transaction(async (tx) => {
+    await tx.employee.update({ where: { id: employeeId }, data: { pinHash: hashPin(pin) } });
+    await audit(tx, actor, { action: 'EMPLOYEE_PIN_SET', entityType: 'Employee', entityId: employeeId, after: { hadPin: employee.pinHash !== null } });
+    return { id: employeeId, hasPin: true };
   });
 }
 
@@ -415,11 +449,11 @@ export async function updateEmployee(prisma: PrismaClient, actor: AdminActor, em
     } });
     await tx.employeeRole.createMany({ data: roles.map((role) => ({ organizationId: actor.organizationId, employeeId, roleId: role.id })) });
     await tx.employeeStore.createMany({ data: [...new Set(storeIds)].map((storeId) => ({ organizationId: actor.organizationId, employeeId, storeId })) });
-    const employee = await tx.employee.findUniqueOrThrow({ where: { id: employeeId }, include: { roles: { include: { role: true } }, stores: { include: { store: true } } } });
+    const employee = await tx.employee.findUniqueOrThrow({ where: { id: employeeId }, include: EMPLOYEE_INCLUDE });
     await audit(tx, actor, { action: input.status === 'INACTIVE' ? 'EMPLOYEE_DEACTIVATED' : 'EMPLOYEE_UPDATED', entityType: 'Employee', entityId: employee.id,
       before: { status: current.status, roles: current.roles.map(({ role }) => role.name), storeIds: current.stores.map(({ storeId }) => storeId) },
       after: { status: employee.status, roles: roleNames, storeIds } });
-    return employee;
+    return publicEmployee(employee);
   });
 }
 

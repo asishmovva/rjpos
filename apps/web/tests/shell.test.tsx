@@ -4,13 +4,10 @@ import RootLayout, { metadata } from '../app/layout.js';
 import Dashboard from '../app/page.js';
 
 describe('RJ POS web foundation', () => {
-  it('renders the register workflow and authoritative checkout copy', () => {
+  it('renders no register content on the server; the PIN screen or register appears after client-side session restore', () => {
     const markup = renderToStaticMarkup(<Dashboard />);
-    expect(markup).toContain('Downtown Register');
-    expect(markup).toContain('Scan UPC');
-    expect(markup).toContain('Final pricing, benefits, and inventory are verified by the server.');
-    expect(markup).toContain('Walk-in customer');
-    expect(markup).toContain('Gift-card code');
+    expect(markup).not.toContain('Scan UPC');
+    expect(markup).not.toContain('Walk-in customer');
   });
 
   it('renders through the root document shell with English metadata', () => {

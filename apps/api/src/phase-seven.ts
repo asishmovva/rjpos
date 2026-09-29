@@ -1,6 +1,6 @@
 import { Body, Controller, ForbiddenException, Get, Inject, Param, Patch, Post, Req } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
-import { cancelHeldTransaction, holdTransaction, listHeldTransactions, listQuickKeys, listQuickKeysAdmin, recordAudit, resumeHeldTransaction, saveQuickKey, type RegisterActor } from '@rjpos/database';
+import { cancelHeldTransaction, holdTransaction, listHeldTransactions, listQuickKeys, getShiftReport, listQuickKeysAdmin, recordAudit, reorderQuickKeys, resumeHeldTransaction, saveQuickKey, type RegisterActor } from '@rjpos/database';
 import { PRISMA } from './core-pos.js';
 import { TenantContextService, type TenantRequest } from './tenant-context.js';
 
@@ -16,6 +16,13 @@ export class PhaseSevenController {
   @Get('admin/quick-keys') quickKeysAdmin(@Req() request: TenantRequest) { return listQuickKeysAdmin(this.prisma, this.actor(request, 'quickkey:manage')); }
   @Post('admin/quick-keys') addQuickKey(@Req() request: TenantRequest, @Body() body: Parameters<typeof saveQuickKey>[2]) { return saveQuickKey(this.prisma, this.actor(request, 'quickkey:manage'), body); }
   @Patch('admin/quick-keys/:quickKeyId') editQuickKey(@Req() request: TenantRequest, @Param('quickKeyId') quickKeyId: string, @Body() body: Omit<Parameters<typeof saveQuickKey>[2], 'id'>) { return saveQuickKey(this.prisma, this.actor(request, 'quickkey:manage'), { ...body, id: quickKeyId }); }
+  @Post('admin/quick-keys/reorder') reorderKeys(@Req() request: TenantRequest, @Body() body: { ids: string[] }) { return reorderQuickKeys(this.prisma, this.actor(request, 'quickkey:manage'), body.ids); }
+  @Get('register-sessions/:sessionId/report')
+  shiftReport(@Req() request: TenantRequest, @Param('sessionId') sessionId: string) {
+    const actor = this.actor(request, 'register:close');
+    // Cashiers get the reconciliation summary only; the detailed breakdown requires report:read (Manager/Owner).
+    return getShiftReport(this.prisma, actor, sessionId, this.tenants.require(request.tenantContext).permissions.has('report:read'));
+  }
   @Get('held-transactions') held(@Req() request: TenantRequest) { return listHeldTransactions(this.prisma, this.actor(request, 'sale:create')); }
   @Post('held-transactions') hold(@Req() request: TenantRequest, @Body() body: Parameters<typeof holdTransaction>[2]) { return holdTransaction(this.prisma, this.actor(request, 'sale:create'), body); }
   @Post('held-transactions/:heldId/resume') resume(@Req() request: TenantRequest, @Param('heldId') heldId: string) { return resumeHeldTransaction(this.prisma, this.actor(request, 'sale:create'), heldId); }

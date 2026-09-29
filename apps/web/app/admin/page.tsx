@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { adminApi, createCatalogFlow, money, type CatalogLookupResult, type Category, type Customer, type Dashboard, type Employee, type GiftCardDetail, type InventoryRow, type LoyaltyProgram, type MasterImportSummary, type MasterProduct, type MovementRow, type OrderRow, type Product, type PurchaseOrderDetail, type PurchaseOrderRow, type PurchaseReceiptRow, type RefundRow, type ReplenishmentSuggestion, type Shift, type StockCount, type Store, type Vendor, type VendorAddress, type VendorMapping, type Transfer, type Promotion } from './admin-client';
+import { EmployeeEditor } from './employee-editor';
 import { PromotionsView, ReplenishmentView, StockCountsView, TransfersView } from './phase-five-views';
 import './admin.css';
 
@@ -693,6 +694,7 @@ function RefundsView({ rows }: { rows: RefundRow[] }): React.ReactNode {
 }
 
 function EmployeesView({ rows, stores, shifts, run }: { rows: Employee[]; stores: Store[]; shifts: Shift[]; run: (operation: () => Promise<unknown>, message: string) => Promise<void> }): React.ReactNode {
+  const [editing, setEditing] = useState<Employee | null>(null);
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const form = event.currentTarget;
@@ -704,6 +706,7 @@ function EmployeesView({ rows, stores, shifts, run }: { rows: Employee[]; stores
           lastName: String(fields.get('lastName')),
           roleNames: [String(fields.get('role'))],
           storeIds: [String(fields.get('storeId'))],
+          ...(fields.get('pin') ? { pin: String(fields.get('pin')) } : {}),
         }),
       'Employee created and assigned.',
     );
@@ -739,9 +742,14 @@ function EmployeesView({ rows, stores, shifts, run }: { rows: Employee[]; stores
             ))}
           </select>
         </label>
+        <label>
+          PIN (4–8 digits, optional)
+          <input name="pin" type="password" inputMode="numeric" pattern="\d{4,8}" autoComplete="off" />
+        </label>
         <button className="primary">Create employee</button>
       </form>
-      <DataTable headers={['Employee', 'Role', 'Stores', 'Status', 'Actions']} empty="No employees found.">
+      {editing && <EmployeeEditor employee={editing} stores={stores} run={run} onClose={() => setEditing(null)} />}
+      <DataTable headers={['Employee', 'Role', 'Stores', 'PIN', 'Status', 'Actions']} empty="No employees found.">
         {rows.map((employee) => (
           <tr key={employee.id}>
             <td>
@@ -749,10 +757,12 @@ function EmployeesView({ rows, stores, shifts, run }: { rows: Employee[]; stores
             </td>
             <td>{employee.roles.map(({ role }) => role.name).join(', ')}</td>
             <td>{employee.stores.map(({ store }) => store.name).join(', ')}</td>
+            <td>{employee.hasPin ? 'Set' : 'Not set'}</td>
             <td>
               <Pill value={employee.status} />
             </td>
             <td>
+              <button onClick={() => setEditing(employee)}>Manage</button>
               <button
                 onClick={() => {
                   const firstName = window.prompt('First name', employee.firstName);

@@ -31,18 +31,46 @@ export async function listQuickKeysAdmin(prisma: PrismaClient, actor: RegisterAc
   return prisma.quickKey.findMany({ where: { organizationId: actor.organizationId, storeId: actor.storeId, OR: [{ registerId: actor.registerId }, { registerId: null }] }, include: { variant: { include: { product: true } } }, orderBy: [{ groupName: 'asc' }, { position: 'asc' }] });
 }
 
-export async function saveQuickKey(prisma: PrismaClient, actor: RegisterActor, input: { id?: string; variantId: string; label: string; groupName?: string; position: number; enabled?: boolean; registerSpecific?: boolean }) {
+export async function saveQuickKey(prisma: PrismaClient, actor: RegisterActor, input: { id?: string; variantId: string; label: string; groupName?: string; position?: number; enabled?: boolean; registerSpecific?: boolean }) {
   const label = input.label.trim(); const groupName = input.groupName?.trim() || 'Favorites';
   if (!label || label.length > 40) throw new PosError('QUICK_KEY_LABEL_INVALID');
-  if (!Number.isInteger(input.position) || input.position < 0 || input.position > 99) throw new PosError('QUICK_KEY_POSITION_INVALID');
+  if (input.position !== undefined && (!Number.isInteger(input.position) || input.position < 0 || input.position > 99)) throw new PosError('QUICK_KEY_POSITION_INVALID');
   const variant = await prisma.productVariant.findFirst({ where: { id: input.variantId, organizationId: actor.organizationId, active: true, product: { active: true } }, select: { id: true } });
   if (!variant) throw new PosError('PRODUCT_VARIANT_NOT_FOUND', 404);
-  const data = { variantId: input.variantId, label, groupName, position: input.position, enabled: input.enabled ?? true, registerId: input.registerSpecific === false ? null : actor.registerId };
-  const key = input.id
-    ? await prisma.quickKey.update({ where: { organizationId_id: { organizationId: actor.organizationId, id: input.id } }, data })
-    : await prisma.quickKey.create({ data: { organizationId: actor.organizationId, storeId: actor.storeId, ...data } });
-  await recordAudit(prisma, { organizationId: actor.organizationId, action: input.id ? 'QUICK_KEY_UPDATED' : 'QUICK_KEY_CREATED', entityType: 'QuickKey', entityId: key.id, afterJson: { label, groupName, position: input.position, enabled: data.enabled } });
-  return key;
+  const current = input.id ? await prisma.quickKey.findFirst({ where: { id: input.id, organizationId: actor.organizationId, storeId: actor.storeId } }) : null;
+  if (input.id && !current) throw new PosError('QUICK_KEY_NOT_FOUND', 404);
+  const registerId = input.registerSpecific === undefined ? (current ? current.registerId : actor.registerId) : input.registerSpecific ? actor.registerId : null;
+  let position = input.position ?? current?.position;
+  if (position === undefined) {
+    const last = await prisma.quickKey.aggregate({ where: { organizationId: actor.organizationId, storeId: actor.storeId, registerId }, _max: { position: true } });
+    position = (last._max.position ?? -1) + 1;
+    if (position > 99) throw new PosError('QUICK_KEY_LIMIT_REACHED', 409);
+  }
+  const data = { variantId: input.variantId, label, groupName, position, enabled: input.enabled ?? current?.enabled ?? true, registerId };
+  try {
+    const key = current
+      ? await prisma.quickKey.update({ where: { organizationId_id: { organizationId: actor.organizationId, id: current.id } }, data })
+      : await prisma.quickKey.create({ data: { organizationId: actor.organizationId, storeId: actor.storeId, ...data } });
+    await recordAudit(prisma, { organizationId: actor.organizationId, action: current ? 'QUICK_KEY_UPDATED' : 'QUICK_KEY_CREATED', entityType: 'QuickKey', entityId: key.id, afterJson: { label, groupName, position, enabled: data.enabled, employeeId: actor.userId } });
+    return key;
+  } catch (error) {
+    if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') throw new PosError('QUICK_KEY_POSITION_TAKEN', 409);
+    throw error;
+  }
+}
+
+/** Reassigns positions 0..n-1 in the given order (same scope only) inside one transaction. */
+export async function reorderQuickKeys(prisma: PrismaClient, actor: RegisterActor, orderedIds: string[]) {
+  if (!Array.isArray(orderedIds) || orderedIds.length === 0 || orderedIds.length > 100 || new Set(orderedIds).size !== orderedIds.length) throw new PosError('QUICK_KEY_ORDER_INVALID');
+  return prisma.$transaction(async (tx) => {
+    const keys = await tx.quickKey.findMany({ where: { id: { in: orderedIds }, organizationId: actor.organizationId, storeId: actor.storeId } });
+    if (keys.length !== orderedIds.length || new Set(keys.map((key) => key.registerId)).size !== 1) throw new PosError('QUICK_KEY_ORDER_INVALID');
+    // Two passes avoid transient collisions on the (store, register, position) unique constraint.
+    for (const [index, id] of orderedIds.entries()) await tx.quickKey.update({ where: { organizationId_id: { organizationId: actor.organizationId, id } }, data: { position: 100 + index } });
+    for (const [index, id] of orderedIds.entries()) await tx.quickKey.update({ where: { organizationId_id: { organizationId: actor.organizationId, id } }, data: { position: index } });
+    await tx.auditRecord.create({ data: { organizationId: actor.organizationId, userId: actor.userId, storeId: actor.storeId, action: 'QUICK_KEYS_REORDERED', entityType: 'QuickKey', entityId: orderedIds[0]!, afterJson: { count: orderedIds.length } } });
+    return { reordered: orderedIds.length };
+  });
 }
 
 export async function holdTransaction(prisma: PrismaClient, actor: RegisterActor, input: { idempotencyKey: string; label?: string; cart: HeldCart }) {

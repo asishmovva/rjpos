@@ -29,10 +29,20 @@ const hardwareMode = environment.RJPOS_HARDWARE_MODE === 'simulated' ? 'simulate
 const apiUrl = (environment.RJPOS_API_URL || 'http://127.0.0.1:3001/api/v1').replace(/\/$/, '');
 const drawer = hardwareMode === 'simulated' ? new SimulatedCashDrawer() : new UnavailableCashDrawer();
 
+// Requests made from the main process act as the signed-in employee (session token from the renderer). Without a
+// session they fall back to the least-privileged cashier identity; privileged actions also need an elevation token.
+const registerEmployeeId = environment.RJPOS_REGISTER_EMPLOYEE_ID || '00000000-0000-0000-0000-000000000006';
+function registerHeaders(sessionToken?: string, elevationToken?: string): Record<string, string> {
+  return {
+    ...(sessionToken ? { 'x-rjpos-session': sessionToken } : { 'x-rjpos-role': 'CASHIER', 'x-rjpos-employee-id': registerEmployeeId }),
+    ...(elevationToken ? { 'x-rjpos-elevation': elevationToken } : {}),
+  };
+}
+const tokenOf = (value: unknown): string | undefined => (typeof value === 'string' && value ? value : undefined);
 function escapeHtml(value: string): string { return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!); }
-async function fetchReceipt(orderId: string): Promise<ReceiptDocument> {
+async function fetchReceipt(orderId: string, sessionToken?: string): Promise<ReceiptDocument> {
   if (!/^[0-9a-f-]{36}$/i.test(orderId)) throw new Error('INVALID_ORDER_ID');
-  const response = await fetch(`${apiUrl}/orders/${orderId}/receipt`, { headers: { 'x-rjpos-role': 'OWNER' }, signal: AbortSignal.timeout(5_000) });
+  const response = await fetch(`${apiUrl}/orders/${orderId}/receipt`, { headers: registerHeaders(sessionToken), signal: AbortSignal.timeout(5_000) });
   if (!response.ok) throw new Error(`RECEIPT_API_${response.status}`);
   const receipt = await response.json() as { orderNumber: string; totalMinor: string; currency: string; store: { name: string }; items: Array<{ productNameSnapshot: string; variantNameSnapshot: string; quantity: number; totalMinor: string }> };
   return { orderNumber: receipt.orderNumber, storeName: receipt.store.name, totalMinor: receipt.totalMinor, currency: receipt.currency, lines: receipt.items.map((item) => ({ label: `${item.productNameSnapshot} ${item.variantNameSnapshot}`, quantity: item.quantity, totalMinor: item.totalMinor })) };
@@ -150,23 +160,23 @@ async function createWindow(): Promise<void> {
 }
 
 ipcMain.handle('hardware:status', async () => ({ scanner: 'ready' as const, printer: await printer.status(), drawer: await drawer.status(), terminal: hardwareMode }));
-ipcMain.handle('hardware:print-receipt', async (_event, orderId: unknown) => {
-  try { return await printer.print(await fetchReceipt(String(orderId))); }
+ipcMain.handle('hardware:print-receipt', async (_event, orderId: unknown, sessionToken: unknown) => {
+  try { return await printer.print(await fetchReceipt(String(orderId), tokenOf(sessionToken))); }
   catch (error) { reportStartupFailure(error); return { ok: false, status: 'error', code: 'PRINT_FAILED', message: 'Receipt could not be printed. Check the printer and try again.', retryable: true }; }
 });
 ipcMain.handle('hardware:test-printer', async () => printer.print({ orderNumber: 'HARDWARE-TEST', storeName: 'RJ POS', totalMinor: '0', currency: 'USD', lines: [{ label: 'Printer test successful', quantity: 1, totalMinor: '0' }] }));
 ipcMain.handle('hardware:open-drawer', async (_event, request: unknown) => {
   try {
-    const value = request && typeof request === 'object' ? request as { reason?: unknown; orderId?: unknown } : {};
+    const value = request && typeof request === 'object' ? request as { reason?: unknown; orderId?: unknown; elevationToken?: unknown; sessionToken?: unknown } : {};
     if (typeof value.orderId === 'string') {
-      const response = await fetch(`${apiUrl}/orders/${value.orderId}/receipt`, { headers: { 'x-rjpos-role': 'OWNER' }, signal: AbortSignal.timeout(5_000) });
+      const response = await fetch(`${apiUrl}/orders/${value.orderId}/receipt`, { headers: registerHeaders(tokenOf(value.sessionToken)), signal: AbortSignal.timeout(5_000) });
       if (!response.ok) throw new Error('DRAWER_SALE_NOT_FOUND');
       const receipt = await response.json() as { payments?: Array<{ kind: string; status: string }> };
       if (!receipt.payments?.some((payment) => payment.kind === 'CASH' && ['CAPTURED', 'REFUNDED'].includes(payment.status))) throw new Error('DRAWER_CASH_SALE_REQUIRED');
     } else {
       const reason = typeof value.reason === 'string' ? value.reason.trim() : '';
       if (!reason) throw new Error('DRAWER_REASON_REQUIRED');
-      const authorization = await fetch(`${apiUrl}/register/manual-drawer-open`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-rjpos-role': 'OWNER' }, body: JSON.stringify({ reason }), signal: AbortSignal.timeout(5_000) });
+      const authorization = await fetch(`${apiUrl}/register/manual-drawer-open`, { method: 'POST', headers: { 'content-type': 'application/json', ...registerHeaders(tokenOf(value.sessionToken), tokenOf(value.elevationToken)) }, body: JSON.stringify({ reason }), signal: AbortSignal.timeout(5_000) });
       if (!authorization.ok) throw new Error('DRAWER_NOT_AUTHORIZED');
     }
     return drawer.open();
@@ -180,7 +190,8 @@ void app
       const rendererRoot = path.resolve(process.resourcesPath, 'renderer');
       protocol.handle('rjpos', (request) => {
         const requestUrl = new URL(request.url);
-        const relativePath = decodeURIComponent(requestUrl.pathname).replace(/^\/+/, '') || 'index.html';
+        const decoded = decodeURIComponent(requestUrl.pathname).replace(/^\/+/, '');
+        const relativePath = !decoded || decoded.endsWith('/') ? `${decoded}index.html` : decoded;
         const rendererPath = path.resolve(rendererRoot, relativePath);
         if (rendererPath !== rendererRoot && !rendererPath.startsWith(`${rendererRoot}${path.sep}`)) {
           return new Response('Not found', { status: 404 });

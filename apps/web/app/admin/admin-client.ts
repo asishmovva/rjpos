@@ -68,6 +68,7 @@ export type Employee = {
   firstName: string;
   lastName: string;
   status: string;
+  hasPin?: boolean;
   roles: Array<{ role: { name: string } }>;
   stores: Array<{ store: Store }>;
 };
@@ -480,7 +481,8 @@ export const adminApi = {
   adjustInventory: (body: { storeId: string; variantId: string; quantityDelta: number; reason: string }) => adminRequest('/inventory/adjust', json('POST', body)),
   updateInventoryPolicy: (body: { storeId: string; variantId: string; lowStockThreshold: number; reorderTarget: number }) => adminRequest('/inventory/policy', json('PATCH', body)),
   employees: () => adminRequest<PageResult<Employee>>('/employees?pageSize=100'),
-  createEmployee: (body: { firstName: string; lastName: string; roleNames: string[]; storeIds: string[] }) => adminRequest<Employee>('/employees', json('POST', body)),
+  setEmployeePin: (id: string, pin: string) => adminRequest<{ id: string; hasPin: boolean }>(`/employees/${id}/pin`, json('POST', { pin })),
+  createEmployee: (body: { firstName: string; lastName: string; roleNames: string[]; storeIds: string[]; pin?: string }) => adminRequest<Employee>('/employees', json('POST', body)),
   updateEmployee: (id: string, body: Record<string, unknown>) => adminRequest<Employee>(`/employees/${id}`, json('PATCH', body)),
   stores: () => adminRequest<Store[]>('/stores'),
   createStore: (body: { name: string; timezone?: string; taxRateBasisPoints?: number }) => adminRequest<Store>('/stores', json('POST', body)),

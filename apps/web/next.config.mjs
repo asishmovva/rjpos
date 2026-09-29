@@ -2,10 +2,10 @@
 const nextConfig = {
   agentRules: false,
   output: 'export',
-  // Electron loads the exported register from file:// in production. Relative
-  // assets keep the bundled renderer self-contained instead of resolving
-  // /_next against the filesystem root.
-  assetPrefix: '.',
+  // Relative assets keep the packaged renderer self-contained. Development
+  // serves from the Next.js server root, where a relative prefix breaks
+  // Turbopack chunk loading and leaves the page unhydrated.
+  ...(process.env.NODE_ENV === 'production' ? { assetPrefix: '.' } : {}),
   trailingSlash: true,
 };
 

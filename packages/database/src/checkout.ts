@@ -74,7 +74,7 @@ function assertCheckoutInput(input: CheckoutContext): void {
 
 export async function quoteCheckout(
   prisma: PrismaClient,
-  input: { organizationId: string; storeId: string; lines: Array<{ variantId: string; quantity: number }> },
+  input: { organizationId: string; storeId: string; lines: Array<{ variantId: string; quantity: number; discount?: CartDiscount }>; orderDiscount?: CartDiscount },
 ) {
   if (!input.lines.length) throw new PosError('CART_EMPTY');
   const ids = new Set<string>();
@@ -113,8 +113,8 @@ export async function quoteCheckout(
     const totals = calculateCartTotals({ taxRateBasisPoints: store.taxRateBasisPoints, lines: authoritative.map(({ line, variant, price }) => ({
       variantId: variant.id, quantity: line.quantity, unitPriceMinor: price.amountMinor,
       taxable: variant.product.taxCategory !== 'EXEMPT',
-      ...(promotions.has(variant.id) ? { discount: promotions.get(variant.id)!.discount } : {}),
-    })) });
+      ...(line.discount ? { discount: line.discount } : promotions.has(variant.id) ? { discount: promotions.get(variant.id)!.discount } : {}),
+    })), ...(input.orderDiscount ? { orderDiscount: input.orderDiscount } : {}) });
     return {
       subtotalMinor: totals.subtotalMinor.toString(), discountMinor: totals.discountMinor.toString(),
       taxMinor: totals.taxMinor.toString(), totalMinor: totals.totalMinor.toString(),

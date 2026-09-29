@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PrismaClient } from '@prisma/client';
 import { findWorkspaceRoot, loadEnvironment } from '@rjpos/config';
+import { hashPin } from '../src/pin.js';
 import { importMasterCatalogCsv } from '../src/purchasing.js';
 
 const environment = loadEnvironment();
@@ -46,6 +47,11 @@ async function main(): Promise<void> {
       update: {},
       create: { organizationId: organization.id, employeeId: employee[0], storeId: store.id },
     });
+  }
+  // Development-only approval PINs so Manager/Owner elevation can be exercised at the register. Set real PINs per store.
+  for (const [id, pin] of [['00000000-0000-0000-0000-000000000004', '1234'], ['00000000-0000-0000-0000-000000000005', '2468'], ['00000000-0000-0000-0000-000000000006', '1111']] as const) {
+    const employee = await prisma.employee.findUniqueOrThrow({ where: { id }, select: { pinHash: true } });
+    if (!employee.pinHash) await prisma.employee.update({ where: { id }, data: { pinHash: hashPin(pin) } });
   }
   const permissionCodes = [
     'catalog:read', 'inventory:read', 'inventory:adjust', 'register:open',

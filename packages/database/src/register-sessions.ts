@@ -63,6 +63,7 @@ export async function openRegisterSession(
     registerId: string;
     employeeId: string;
     openingCashMinor: bigint;
+    note?: string;
   },
 ) {
   if (input.openingCashMinor < 0n) throw new Error('OPENING_CASH_INVALID');
@@ -92,7 +93,8 @@ export async function openRegisterSession(
     if (activeSession?.status === 'CLOSING')
       throw new PosError('REGISTER_SESSION_CLOSING', 409);
     if (activeSession) return activeSession;
-    const session = await tx.registerSession.create({ data: input });
+    const { note, ...sessionData } = input;
+    const session = await tx.registerSession.create({ data: sessionData });
     await Promise.all([
       tx.auditRecord.create({
         data: {
@@ -103,7 +105,7 @@ export async function openRegisterSession(
           action: 'REGISTER_OPENED',
           entityType: 'RegisterSession',
           entityId: session.id,
-          afterJson: { openingCashMinor: input.openingCashMinor.toString() },
+          afterJson: { openingCashMinor: input.openingCashMinor.toString(), ...(note?.trim() ? { note: note.trim().slice(0, 200) } : {}) },
         },
       }),
       tx.outboxEvent.create({
