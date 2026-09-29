@@ -7,6 +7,8 @@ export type CartLineInput = {
   unitPriceMinor: bigint;
   quantity: number;
   taxable: boolean;
+  /** Rate from the line's tax profile (basis points). When set it overrides `taxable` and the cart-level rate. */
+  taxRateBasisPoints?: number;
   discount?: CartDiscount;
 };
 
@@ -16,6 +18,8 @@ export type CalculatedCartLine = {
   unitPriceMinor: bigint;
   subtotalMinor: bigint;
   discountMinor: bigint;
+  /** The rate actually applied to this line, so mixed-tax carts can be audited and snapshotted. */
+  taxRateBasisPoints: number;
   taxMinor: bigint;
   totalMinor: bigint;
 };
@@ -83,9 +87,11 @@ export function calculateCartTotals(input: {
     if (!Number.isInteger(line.quantity) || line.quantity <= 0)
       throw new Error('QUANTITY_INVALID');
     assertMinorUnits(line.unitPriceMinor, 'UNIT_PRICE');
+    const lineRate = line.taxRateBasisPoints ?? (line.taxable ? input.taxRateBasisPoints : 0);
+    if (!Number.isInteger(lineRate) || lineRate < 0 || lineRate > 10_000) throw new Error('TAX_RATE_INVALID');
     const subtotalMinor = line.unitPriceMinor * BigInt(line.quantity);
     const lineDiscountMinor = calculateDiscount(subtotalMinor, line.discount);
-    return { ...line, subtotalMinor, lineDiscountMinor };
+    return { ...line, lineRate, subtotalMinor, lineDiscountMinor };
   });
   const subtotalMinor = prepared.reduce(
     (sum, line) => sum + line.subtotalMinor,
@@ -112,17 +118,15 @@ export function calculateCartTotals(input: {
         : (orderDiscountMinor * lineNet) / afterLineDiscounts;
     allocatedOrderDiscount += orderShare;
     const discountMinor = line.lineDiscountMinor + orderShare;
-    const taxableMinor = line.taxable ? line.subtotalMinor - discountMinor : 0n;
-    const taxMinor = roundRatio(
-      taxableMinor * BigInt(input.taxRateBasisPoints),
-      10_000n,
-    );
+    const taxableMinor = line.subtotalMinor - discountMinor;
+    const taxMinor = roundRatio(taxableMinor * BigInt(line.lineRate), 10_000n);
     return {
       variantId: line.variantId,
       quantity: line.quantity,
       unitPriceMinor: line.unitPriceMinor,
       subtotalMinor: line.subtotalMinor,
       discountMinor,
+      taxRateBasisPoints: line.lineRate,
       taxMinor,
       totalMinor: line.subtotalMinor - discountMinor + taxMinor,
     };

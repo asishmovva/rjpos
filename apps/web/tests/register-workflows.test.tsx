@@ -98,11 +98,12 @@ describe('Register runtime workflows', () => {
 
   it('creates a customer from the register and selects it immediately', async () => {
     const user = userEvent.setup(); render(<Register />);
-    await user.click(await screen.findByRole('button', { name: 'New' }));
+    await user.click(await screen.findByRole('button', { name: 'Customer' }));
+    await user.click(await screen.findByRole('button', { name: 'New customer' }));
     await user.type(screen.getByLabelText('Customer name'), 'Sam Rivera'); await user.type(screen.getByLabelText('Customer phone'), '5551234');
     await user.click(screen.getByRole('button', { name: 'Save and select customer' }));
     await waitFor(() => expect(bodyOf('/customers')[0]).toEqual({ name: 'Sam Rivera', phone: '5551234' }));
-    expect((await screen.findAllByText('Sam Rivera')).length).toBeGreaterThan(0);
+    expect(await screen.findByRole('button', { name: /Sam Rivera/ })).toBeTruthy();
   });
 
   it('closes the shift with counted cash and shows cashiers only the reconciliation summary', async () => {

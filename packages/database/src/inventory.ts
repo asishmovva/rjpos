@@ -33,6 +33,8 @@ async function requireInventoryContext(
     }),
   ]);
   if (!variant) throw new PosError('INVENTORY_VARIANT_NOT_FOUND', 404);
+  // Pack variants sell from their base variant's stock and never hold their own.
+  if (variant.baseVariantId) throw new PosError('PACK_VARIANT_HAS_NO_OWN_STOCK', 409);
   if (!employee) throw new PosError('EMPLOYEE_STORE_ACCESS_DENIED', 403);
   return variant;
 }

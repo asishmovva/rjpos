@@ -39,6 +39,7 @@ export type Store = {
 export type InvoiceLine = {
   id: string; lineNumber: number; description: string; upc: string | null; vendorSku: string | null;
   quantity: number; caseQuantity: number; unitCostMinor: string; lineTotalMinor: string; confidence: string | null;
+  size?: string | null; casesReceived?: number | null; caseCostMinor?: string | null; discountPerCaseMinor?: string | null; rawText?: string | null; updateVendorCost?: boolean;
   matchStatus: 'MATCHED' | 'MASTER_CATALOG' | 'NEEDS_REVIEW' | 'NEW_PRODUCT' | 'INVALID'; ignored: boolean;
   variant: (Variant & { product: { name: string }; barcodes: Array<{ barcodeValue: string }> }) | null;
   masterProduct: MasterProduct | null;
@@ -444,7 +445,7 @@ export const adminApi = {
   updateInvoice: (id: string, body: Record<string, unknown>) => adminRequest<InvoiceDocument>(`/invoices/${id}`, json('PATCH', body)),
   updateInvoiceLine: (invoiceId: string, lineId: string, body: Record<string, unknown>) => adminRequest<InvoiceDocument>(`/invoices/${invoiceId}/lines/${lineId}`, json('PATCH', body)),
   rejectInvoice: (id: string) => adminRequest<InvoiceDocument>(`/invoices/${id}/reject`, json('POST', {})),
-  confirmInvoice: (id: string, acknowledgeDuplicate = false) => adminRequest<InvoiceDocument>(`/invoices/${id}/confirm`, json('POST', { acknowledgeDuplicate })),
+  confirmInvoice: (id: string, acknowledgeDuplicate = false, acknowledgeDiscrepancies = false) => adminRequest<InvoiceDocument>(`/invoices/${id}/confirm`, json('POST', { acknowledgeDuplicate, acknowledgeDiscrepancies })),
   dashboard: (storeId?: string, from?: string, to?: string) => adminRequest<Dashboard>(`/dashboard${query({ storeId, from, to })}`),
   categories: (search = '') => adminRequest<PageResult<Category>>(`/categories${query({ search, pageSize: 100 })}`),
   createCategory: (name: string) => adminRequest<Category>('/categories', json('POST', { name })),

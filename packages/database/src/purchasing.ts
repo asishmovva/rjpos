@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Prisma, type PrismaClient, type PurchaseOrderStatus } from '@prisma/client';
+import { applyVendorDeals, effectiveCost } from '@rjpos/domain-types';
+import { recordCostHistory } from './cost-history.js';
 import { PosError } from './pos-errors.js';
 import type { AdminActor } from './back-office.js';
 
@@ -364,9 +366,10 @@ export async function listVendorMappings(prisma: PrismaClient, actor: Purchasing
 }
 
 export async function saveVendorMapping(prisma: PrismaClient, actor: PurchasingActor, input: {
-  id?: string; vendorId: string; variantId: string; vendorSku?: string; vendorCostMinor: string; casePackQuantity?: number; minimumOrderQuantity?: number; preferred?: boolean; active?: boolean;
+  id?: string; vendorId: string; variantId: string; vendorSku?: string; vendorCostMinor: string; caseCostMinor?: string; casePackQuantity?: number; minimumOrderQuantity?: number; preferred?: boolean; active?: boolean;
 }) {
   const vendorCostMinor = money(input.vendorCostMinor, 'VENDOR_COST_INVALID');
+  const caseCostMinor = input.caseCostMinor === undefined ? undefined : money(input.caseCostMinor, 'VENDOR_COST_INVALID');
   return withUniqueConflict(() => prisma.$transaction(async (tx) => {
     const [vendor, variant] = await Promise.all([
       tx.vendor.findFirst({ where: { id: input.vendorId, organizationId: actor.organizationId, active: true } }),
@@ -386,7 +389,7 @@ export async function saveVendorMapping(prisma: PrismaClient, actor: PurchasingA
     const preferred = active ? input.preferred ?? existing?.preferred ?? false : false;
     if (preferred) await tx.vendorProductMapping.updateMany({ where: { organizationId: actor.organizationId, variantId: variant.id }, data: { preferred: false } });
     const data = { vendorSku: input.vendorSku === undefined ? existing?.vendorSku ?? null : input.vendorSku.trim() || null,
-      vendorCostMinor, casePackQuantity, minimumOrderQuantity, preferred, active };
+      vendorCostMinor, ...(caseCostMinor === undefined ? {} : { caseCostMinor }), casePackQuantity, minimumOrderQuantity, preferred, active };
     const mapping = input.id
       ? await tx.vendorProductMapping.updateMany({ where: { id: input.id, organizationId: actor.organizationId }, data })
         .then(async (result) => result.count ? tx.vendorProductMapping.findUniqueOrThrow({ where: { id: input.id! } }) : null)
@@ -415,9 +418,13 @@ export async function listPurchaseOrders(prisma: PrismaClient, actor: Purchasing
   return { items: items.map((order) => ({ ...order, totalMinor: order.lines.reduce((sum, line) => sum + line.unitCostMinor * BigInt(line.orderedQuantity), 0n).toString() })), total, page, pageSize };
 }
 
-async function addOrderLines(tx: Tx, actor: PurchasingActor, purchaseOrderId: string, vendorId: string, lines: Array<{
+type OrderLineInput = {
   variantId: string; quantity: number; vendorProductMappingId?: string; unitCostMinor?: string;
-}>) {
+  /** Optional explicit case economics (e.g. from a reviewed invoice); otherwise taken from the vendor mapping and active deals. */
+  unitsPerCase?: number; caseCostMinor?: string; discountPerCaseMinor?: string; rebatePerCaseMinor?: string;
+};
+
+async function addOrderLines(tx: Tx, actor: PurchasingActor, purchaseOrderId: string, vendorId: string, lines: OrderLineInput[]) {
   if (!lines.length) throw new PosError('PURCHASE_ORDER_LINES_REQUIRED');
   const distinct = new Set(lines.map((line) => line.variantId));
   if (distinct.size !== lines.length) throw new PosError('PURCHASE_ORDER_LINE_DUPLICATE');
@@ -426,26 +433,42 @@ async function addOrderLines(tx: Tx, actor: PurchasingActor, purchaseOrderId: st
     const variant = await tx.productVariant.findFirst({ where: { id: line.variantId, organizationId: actor.organizationId, active: true },
       include: { product: true } });
     if (!variant) throw new PosError('PRODUCT_VARIANT_NOT_FOUND', 404);
+    // Pack variants are sold from their base variant's stock, so only the base unit is purchased.
+    if (variant.baseVariantId) throw new PosError('PACK_VARIANT_NOT_PURCHASABLE', 409);
     const mapping = line.vendorProductMappingId
       ? await tx.vendorProductMapping.findFirst({ where: { id: line.vendorProductMappingId, organizationId: actor.organizationId, vendorId, variantId: variant.id, active: true } })
       : await tx.vendorProductMapping.findFirst({ where: { organizationId: actor.organizationId, vendorId, variantId: variant.id, active: true } });
     if (line.vendorProductMappingId && !mapping) throw new PosError('VENDOR_MAPPING_NOT_FOUND', 404);
-    const cost = line.unitCostMinor === undefined
+    let cost = line.unitCostMinor === undefined
       ? mapping?.vendorCostMinor
       : money(line.unitCostMinor, 'PURCHASE_ORDER_COST_INVALID');
     if (cost === undefined) throw new PosError('PURCHASE_ORDER_COST_REQUIRED');
+    // Case economics snapshot. Deals are applied only when the cost came from the vendor mapping; an explicit cost is kept as given.
+    const unitsPerCase = line.unitsPerCase ?? mapping?.casePackQuantity ?? null;
+    let caseCostMinor = line.caseCostMinor === undefined ? mapping?.caseCostMinor ?? (unitsPerCase ? cost * BigInt(unitsPerCase) : null) : money(line.caseCostMinor, 'PURCHASE_ORDER_COST_INVALID');
+    let discountPerCaseMinor = line.discountPerCaseMinor === undefined ? null : money(line.discountPerCaseMinor, 'PURCHASE_ORDER_COST_INVALID');
+    let rebatePerCaseMinor = line.rebatePerCaseMinor === undefined ? null : money(line.rebatePerCaseMinor, 'PURCHASE_ORDER_COST_INVALID');
+    if (line.unitCostMinor === undefined && mapping && unitsPerCase && caseCostMinor !== null && line.discountPerCaseMinor === undefined) {
+      const deals = await tx.vendorDeal.findMany({ where: { organizationId: actor.organizationId, vendorId, active: true, OR: [{ variantId: variant.id }, { variantId: null }],
+        AND: [{ OR: [{ startsAt: null }, { startsAt: { lte: new Date() } }] }, { OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] }] } });
+      if (deals.length) {
+        const applied = applyVendorDeals({ baseCaseCostMinor: caseCostMinor, unitsPerCase, cases: Math.max(1, Math.floor(line.quantity / unitsPerCase)), deals });
+        cost = applied.effectiveUnitCostMinor; discountPerCaseMinor = applied.discountPerCaseMinor; rebatePerCaseMinor = applied.rebatePerCaseMinor;
+      }
+    }
     const minimum = mapping?.minimumOrderQuantity ?? 1;
     if (line.quantity < minimum) throw new PosError('PURCHASE_ORDER_MINIMUM_NOT_MET');
     if (mapping && line.quantity % mapping.casePackQuantity !== 0) throw new PosError('PURCHASE_ORDER_CASE_PACK_INVALID');
     await tx.purchaseOrderLine.create({ data: { organizationId: actor.organizationId, purchaseOrderId, variantId: variant.id,
       productNameSnapshot: variant.product.name, variantNameSnapshot: variant.name, skuSnapshot: variant.sku,
-      vendorSkuSnapshot: mapping?.vendorSku ?? null, orderedQuantity: line.quantity, unitCostMinor: cost } });
+      vendorSkuSnapshot: mapping?.vendorSku ?? null, orderedQuantity: line.quantity, unitCostMinor: cost,
+      unitsPerCase, caseCostMinor, discountPerCaseMinor, rebatePerCaseMinor } });
   }
 }
 
 export async function createPurchaseOrder(prisma: PrismaClient, actor: PurchasingActor, input: {
   storeId?: string; vendorId: string; poNumber: string; notes?: string;
-  lines: Array<{ variantId: string; quantity: number; vendorProductMappingId?: string; unitCostMinor?: string }>;
+  lines: OrderLineInput[];
 }) {
   const storeId = input.storeId ?? actor.storeId;
   if (!storeId || (actor.storeId && actor.storeId !== storeId)) throw new PosError('STORE_ACCESS_DENIED', 403);
@@ -469,7 +492,7 @@ export async function createPurchaseOrder(prisma: PrismaClient, actor: Purchasin
 }
 
 export async function updateDraftPurchaseOrder(prisma: PrismaClient, actor: PurchasingActor, purchaseOrderId: string, input: {
-  vendorId?: string; poNumber?: string; notes?: string | null; lines?: Array<{ variantId: string; quantity: number; vendorProductMappingId?: string; unitCostMinor?: string }>;
+  vendorId?: string; poNumber?: string; notes?: string | null; lines?: OrderLineInput[];
 }) {
   return withUniqueConflict(() => prisma.$transaction(async (tx) => {
     const rows = await tx.$queryRaw<Array<{ id: string; status: string; storeId: string }>>`
@@ -525,7 +548,7 @@ export async function transitionPurchaseOrder(prisma: PrismaClient, actor: Purch
 type ReceiptLineInput = { purchaseOrderLineId: string; deliveredQuantity: number; damagedQuantity?: number; rejectedQuantity?: number; unitCostMinor?: string };
 
 export async function receivePurchaseOrder(prisma: PrismaClient, actor: PurchasingActor, purchaseOrderId: string, input: {
-  idempotencyKey: string; vendorReferenceNumber?: string; notes?: string; lines: ReceiptLineInput[];
+  idempotencyKey: string; vendorReferenceNumber?: string; notes?: string; lines: ReceiptLineInput[]; invoiceDocumentId?: string;
 }) {
   const idempotencyKey = required(input.idempotencyKey, 'RECEIPT_IDEMPOTENCY_KEY_REQUIRED');
   if (!input.lines.length) throw new PosError('RECEIPT_LINES_REQUIRED');
@@ -585,6 +608,20 @@ export async function receivePurchaseOrder(prisma: PrismaClient, actor: Purchasi
         purchaseOrderLineId: orderLine.id, deliveredQuantity: line.deliveredQuantity, damagedQuantity: line.damagedQuantity ?? 0,
         rejectedQuantity: line.rejectedQuantity ?? 0, unitCostMinor } });
       await tx.purchaseOrderLine.update({ where: { id: orderLine.id }, data: { receivedQuantity: { increment: line.deliveredQuantity } } });
+      {
+        // Append-only cost history: the components as purchased, never rewritten when the vendor's current price changes.
+        const unitsPerCase = orderLine.unitsPerCase ?? 1;
+        const overridden = line.unitCostMinor !== undefined && unitCostMinor !== orderLine.unitCostMinor;
+        const base = !overridden && orderLine.caseCostMinor !== null ? orderLine.caseCostMinor : unitCostMinor * BigInt(unitsPerCase);
+        const discount = overridden ? 0n : orderLine.discountPerCaseMinor ?? 0n; const rebate = overridden ? 0n : orderLine.rebatePerCaseMinor ?? 0n;
+        let breakdown;
+        try { breakdown = effectiveCost({ baseCaseCostMinor: base, unitsPerCase, discountPerCaseMinor: discount, rebatePerCaseMinor: rebate }); }
+        catch { breakdown = effectiveCost({ baseCaseCostMinor: base, unitsPerCase }); }
+        await recordCostHistory(tx, { organizationId: actor.organizationId, storeId: order.storeId, variantId: orderLine.variantId, vendorId: purchaseOrder.vendorId, purchaseOrderId,
+          source: input.invoiceDocumentId ? 'INVOICE_CONFIRMED' : 'PURCHASE_RECEIPT', ...(input.invoiceDocumentId ? { invoiceDocumentId: input.invoiceDocumentId } : {}), cost: breakdown, casesOrdered: Math.floor(orderLine.orderedQuantity / unitsPerCase) || null,
+          casesReceived: line.deliveredQuantity % unitsPerCase === 0 ? line.deliveredQuantity / unitsPerCase : null, unitsReceived: line.deliveredQuantity,
+          unitsDamaged: line.damagedQuantity ?? 0, unitsRejected: line.rejectedQuantity ?? 0, createdByEmployeeId: receiver.id, notes: `Receipt ${receipt.id}` });
+      }
       if (accepted > 0) {
         const level = await tx.inventoryLevel.upsert({
           where: { organizationId_storeId_variantId: { organizationId: actor.organizationId, storeId: order.storeId, variantId: orderLine.variantId } },

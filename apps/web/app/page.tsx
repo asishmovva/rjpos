@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './register.css';
+import './register-pos.css';
 import { api, adjustmentToDiscount, friendlyError, getApiSessionToken, loadStoredSession, money, parseDollarsToMinor, setApiSession, storeSession, type DiscountBody, type PriceAdjustment, type RegisterSession } from './register-api';
 import { CartLine } from './cart-line';
 import { InventoryView } from './inventory-view';
 import { LockScreen } from './register-lock';
-import { CustomerCreateForm, DiscountDialog, ElevationDialog, isElevationActive, OpenRegisterDialog, ShiftReportView, type Elevation, type ShiftReport } from './register-dialogs';
+import { AgeCheckDialog, CustomerCreateForm, CustomerDialog, DiscountDialog, ElevationDialog, GiftCardDialog, isElevationActive, OpenRegisterDialog, SaleCompleteDialog, ShiftReportView, TenderDialog, type Elevation, type SaleSummary, type ShiftReport } from './register-dialogs';
 type CatalogItem = {
   variantId: string;
   productName: string;
@@ -86,7 +87,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
   const [priceCheckMode, setPriceCheckMode] = useState(false);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [message, setMessage] = useState('Open the register to begin selling.');
-  const [ageVerified, setAgeVerified] = useState(false);
+  const [ageVerified, setAgeState] = useState(false);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [history, setHistory] = useState<
     Array<{
@@ -112,7 +113,12 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
   const [quickKeys, setQuickKeys] = useState<QuickKey[]>([]);
   const [quickGroup, setQuickGroup] = useState('All');
   const [heldTransactions, setHeldTransactions] = useState<HeldTransaction[]>([]);
-  const [utility, setUtility] = useState<'none' | 'resume' | 'discount' | 'drawer' | 'hardware' | 'return' | 'approve' | 'open' | 'customer' | 'close' | 'report'>('none');
+  const [utility, setUtility] = useState<'none' | 'resume' | 'discount' | 'drawer' | 'hardware' | 'return' | 'approve' | 'open' | 'customer' | 'close' | 'report' | 'age' | 'tender' | 'customerPanel' | 'gift'>('none');
+  const [quickPage, setQuickPage] = useState(0);
+  const [saleSummary, setSaleSummary] = useState<SaleSummary | null>(null);
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [storeTimezone, setStoreTimezone] = useState<string | undefined>(undefined);
+  const ageRef = useRef(false);
   const [elevation, setElevation] = useState<Elevation | null>(null);
   const [approveReason, setApproveReason] = useState('');
   const pendingAction = useRef<(() => void) | null>(null);
@@ -172,13 +178,13 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
 
   useEffect(() => {
     void (async () => {
-      const [shiftResult, sessionResult, storeResult, keysResult] = await Promise.allSettled([api<{ clockedOutAt: string | null } | null>('/workforce/current'), api<{ id: string; status: 'OPEN' | 'CLOSING' } | null>('/register-sessions/current'), api<{ taxRateBasisPoints: number; name?: string }>('/store/current'), api<QuickKey[]>('/quick-keys')]);
+      const [shiftResult, sessionResult, storeResult, keysResult] = await Promise.allSettled([api<{ clockedOutAt: string | null } | null>('/workforce/current'), api<{ id: string; status: 'OPEN' | 'CLOSING' } | null>('/register-sessions/current'), api<{ taxRateBasisPoints: number; name?: string; timezone?: string }>('/store/current'), api<QuickKey[]>('/quick-keys')]);
       if (shiftResult.status === 'fulfilled') setClockedIn(Boolean(shiftResult.value && shiftResult.value.clockedOutAt === null));
       if (sessionResult.status === 'fulfilled' && sessionResult.value?.status === 'OPEN') {
         setSessionId(sessionResult.value.id);
         setMessage('Existing register session restored. Ready to sell.');
       }
-      if (storeResult.status === 'fulfilled') { setTaxRate(storeResult.value.taxRateBasisPoints); if (storeResult.value.name) setStoreName(storeResult.value.name); }
+      if (storeResult.status === 'fulfilled') { setTaxRate(storeResult.value.taxRateBasisPoints); if (storeResult.value.name) setStoreName(storeResult.value.name); if (storeResult.value.timezone) setStoreTimezone(storeResult.value.timezone); }
       if (keysResult.status === 'fulfilled' && Array.isArray(keysResult.value)) setQuickKeys(keysResult.value);
       setOnline([shiftResult, sessionResult, storeResult].some((result) => result.status === 'fulfilled'));
     })();
@@ -329,9 +335,10 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
       setMessage('Open the register before checkout.');
       return;
     }
+    if (cart.some((line) => line.ageRestricted) && !ageRef.current) { pendingAction.current = () => void checkout(kind, tendered); setUtility('age'); return; }
     if (adjustments.active && session.role === 'CASHIER' && !currentElevation()) { requireElevation('Approve the discount to complete this sale.', () => void checkout(kind, tendered)); return; }
     try {
-      const result = await api<{ orderId: string }>(`/checkout/${kind}`, {
+      const result = await api<{ orderId: string; tenderedMinor?: string; changeDueMinor?: string }>(`/checkout/${kind}`, {
         method: 'POST',
         ...(adjustments.active ? withApproval() : {}),
         body: JSON.stringify({
@@ -339,12 +346,12 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
           idempotencyKey: crypto.randomUUID(),
           lines: adjustments.lines,
           ...(adjustments.orderDiscount ? { orderDiscount: adjustments.orderDiscount } : {}),
-          ageVerified,
+          ageVerified: ageRef.current,
           ...(customer ? { customerId: customer.id } : {}),
           ...(kind === 'cash' ? { tenderedMinor: tendered } : { simulatedOutcome: 'APPROVED' }),
         }),
       });
-      await finishSale(result.orderId);
+      await finishSale(result.orderId, kind === 'cash' ? { tenderedMinor: result.tenderedMinor ?? tendered, changeDueMinor: result.changeDueMinor ?? (BigInt(tendered) > total ? (BigInt(tendered) - total).toString() : '0') } : undefined);
       if (kind === 'cash' && window.rjpos) {
         const drawerResult = await window.rjpos.openDrawer({ orderId: result.orderId, ...sessionHint() });
         if (!drawerResult.ok) setMessage(`Sale complete. ${drawerResult.message}`);
@@ -353,10 +360,14 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
       setMessage(kind === 'terminal' && error instanceof Error && error.message.includes('cannot reach') ? 'Payment status is unknown. Do not retry until the order is checked.' : error instanceof Error ? error.message : 'Checkout failed');
     }
   }
-  async function finishSale(orderId: string): Promise<void> {
-    setReceipt(await api<Receipt>(`/orders/${orderId}/receipt`));
+  async function finishSale(orderId: string, cash?: { tenderedMinor: string; changeDueMinor: string }): Promise<void> {
+    const sold = await api<Receipt>(`/orders/${orderId}/receipt`);
+    setReceipt(sold);
+    setReceiptOpen(!cash);
+    setSaleSummary(cash ? { totalMinor: sold.totalMinor, ...cash } : null);
+    setCashTendered('');
     setCart([]);
-    setAgeVerified(false);
+    setAge(false);
     setCustomer(null);
     setLoyaltyPoints(0);
     setGiftCode('');
@@ -389,6 +400,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
       setMessage('Open the register before checkout.');
       return;
     }
+    if (cart.some((line) => line.ageRestricted) && !ageRef.current) { pendingAction.current = () => void mixedCheckout(kind); setUtility('age'); return; }
     if (adjustments.active && session.role === 'CASHIER' && !currentElevation()) { requireElevation('Approve the discount to complete this sale.', () => void mixedCheckout(kind)); return; }
     try {
       const amount = BigInt(giftAmount || '0');
@@ -396,7 +408,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
       const rawRemainder = total - benefit;
       if (kind === 'TERMINAL' && rawRemainder <= 0n) throw new Error('TERMINAL_AMOUNT_REQUIRED');
       const remainder = rawRemainder < 0n ? 0n : rawRemainder;
-      const result = await api<{ orderId: string }>('/checkout/mixed', {
+      const result = await api<{ orderId: string; tenderedMinor?: string; changeDueMinor?: string }>('/checkout/mixed', {
         method: 'POST',
         ...(adjustments.active ? withApproval() : {}),
         body: JSON.stringify({
@@ -404,7 +416,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
           idempotencyKey: crypto.randomUUID(),
           lines: adjustments.lines,
           ...(adjustments.orderDiscount ? { orderDiscount: adjustments.orderDiscount } : {}),
-          ageVerified,
+          ageVerified: ageRef.current,
           ...(customer ? { customerId: customer.id } : {}),
           ...(giftCode && amount > 0n
             ? {
@@ -412,10 +424,10 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
               }
             : {}),
           ...(loyaltyPoints > 0 ? { loyaltyPoints } : {}),
-          remainder: kind === 'CASH' ? { kind, tenderedMinor: remainder.toString() } : { kind, simulatedOutcome: 'APPROVED' },
+          remainder: kind === 'CASH' ? { kind, tenderedMinor: cashTendered && /^\d+$/.test(cashTendered) && BigInt(cashTendered) > remainder ? cashTendered : remainder.toString() } : { kind, simulatedOutcome: 'APPROVED' },
         }),
       });
-      await finishSale(result.orderId);
+      await finishSale(result.orderId, kind === 'CASH' ? { tenderedMinor: result.tenderedMinor ?? remainder.toString(), changeDueMinor: result.changeDueMinor ?? '0' } : undefined);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Split checkout failed');
     }
@@ -516,14 +528,14 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
   }
   function voidCart(): void {
     if (!cart.length) return;
-    setCart([]); setCustomer(null); setAgeVerified(false); clearAdjustments(); setOverrideReason('');
+    setCart([]); setCustomer(null); setAge(false); clearAdjustments(); setOverrideReason(''); setCashTendered('');
     setMessage('Current cart cleared. No sale was recorded.');
   }
   async function holdSale(): Promise<void> {
     if (!cart.length) { setMessage('Add an item before holding this sale.'); return; }
     try {
       await api('/held-transactions', { method: 'POST', body: JSON.stringify({ idempotencyKey: crypto.randomUUID(), label: customer?.name || `Cart · ${cart.length} item${cart.length === 1 ? '' : 's'}`, cart: { lines: cart, ...(customer ? { customerId: customer.id } : {}), ageVerified } }) });
-      setCart([]); setCustomer(null); setAgeVerified(false); clearAdjustments(); setMessage('Sale held. You can resume it from this register.');
+      setCart([]); setCustomer(null); setAge(false); clearAdjustments(); setMessage('Sale held. You can resume it from this register.');
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not hold sale.'); }
   }
   async function showHeld(): Promise<void> {
@@ -533,7 +545,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
   async function resumeSale(id: string): Promise<void> {
     try {
       const result = await api<{ cart: { lines: CartLine[]; customerId?: string; ageVerified?: boolean }; pricingRevalidated: boolean }>(`/held-transactions/${id}/resume`, { method: 'POST', body: '{}' });
-      setCart(result.cart.lines); setAgeVerified(Boolean(result.cart.ageVerified)); setUtility('none'); setMessage('Held sale resumed. Prices and promotions were rechecked.');
+      setCart(result.cart.lines); setAge(Boolean(result.cart.ageVerified)); setUtility('none'); setMessage('Held sale resumed. Prices and promotions were rechecked.');
       if (result.cart.customerId) await selectCustomer({ id: result.cart.customerId, name: '', email: null, phone: null });
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not resume sale.'); }
   }
@@ -552,6 +564,22 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
     const result = await window.rjpos.printReceipt(receipt.id, getApiSessionToken() ?? undefined); setMessage(result.message);
   }
 
+  function setAge(value: boolean): void { ageRef.current = value; setAgeState(value); }
+  const restricted = cart.some((line) => line.ageRestricted);
+  const giftKeyed = /^\d+$/.test(giftAmount || '0') ? BigInt(giftAmount || '0') : 0n;
+  const splitActive = Boolean(giftCode) || loyaltyPoints > 0;
+  const benefit = splitActive ? giftKeyed + BigInt(loyaltyPoints) * BigInt(loyaltyProgram?.redeemMinorPerPoint ?? '0') : 0n;
+  const giftApplied = Boolean(giftCode) && giftKeyed > 0n;
+  const dueNow = benefit >= total ? 0n : total - benefit;
+  const tenderedAmount = cashTendered && /^\d+$/.test(cashTendered) ? BigInt(cashTendered) : null;
+  const shortBy = tenderedAmount !== null && tenderedAmount < dueNow ? dueNow - tenderedAmount : 0n;
+  const changeDue = tenderedAmount !== null && tenderedAmount >= dueNow ? tenderedAmount - dueNow : 0n;
+  const QUICK_PAGE_SIZE = 36;
+  const groupKeys = quickKeys.filter((key) => quickGroup === 'All' || key.groupName === quickGroup);
+  const quickPages = Math.max(1, Math.ceil(groupKeys.length / QUICK_PAGE_SIZE));
+  const activeQuickPage = Math.min(quickPage, quickPages - 1);
+  const pageKeys = groupKeys.slice(activeQuickPage * QUICK_PAGE_SIZE, (activeQuickPage + 1) * QUICK_PAGE_SIZE);
+
   return (
     <main className="shell">
       <header className="topbar">
@@ -565,6 +593,10 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
         </div>
         <div className={`status ${online ? 'open' : 'offline'}`}><span />{online ? 'Server online' : 'Server unavailable'}</div>
         <div className="cashier-summary"><strong>{session.employee.name}</strong><small>{session.role === 'OWNER' ? 'Owner' : session.role === 'MANAGER' ? 'Manager' : 'Cashier'} · {clockedIn ? 'Clocked in' : 'Clocked out'} · {customer?.name ?? 'Walk-in'}</small>{isElevationActive(elevation) && <button className="text" onClick={() => grantElevation(null)}>Approved by {elevation.approver.name} · tap to lock</button>}</div>
+        <div className="header-actions">
+          {!sessionId ? <button className="hdr-btn primary" onClick={() => setUtility('open')}>Open register</button> : <button className="hdr-btn" onClick={() => beginClose(false)}>Close register</button>}
+          <button className="hdr-btn" onClick={() => void toggleClock()}>{clockedIn ? 'Clock out' : 'Clock in'}</button>
+        </div>
         <nav>
           <button onClick={() => setView('register')}>Register</button>
           <button onClick={() => setView('inventory')}>Inventory</button>
@@ -573,25 +605,10 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
         </nav>
       </header>
       {view === 'register' && (<>
-        <div className="register-grid">
-          <section className="workspace">
-            <div className="session-actions">
-              {!sessionId ? (
-                <button className="primary" onClick={() => setUtility('open')}>
-                  Open register
-                </button>
-              ) : (
-                <button className="quiet" onClick={() => beginClose(false)}>
-                  Close register
-                </button>
-              )}
-              <button className="quiet" onClick={() => void toggleClock()}>
-                {clockedIn ? 'Clock out' : 'Clock in'}
-              </button>
-              <p>{message}</p>
-            </div>
+        <div className="pos">
+          <section className="pos-left">
             <div className="scanbox">
-              <label htmlFor="scan">Scan UPC, enter SKU, or search products</label>
+              <div className="scan-label"><label htmlFor="scan">Scan UPC, enter SKU, or search products</label><p role="status">{message}</p></div>
               <div>
                 <input
                   id="scan"
@@ -640,18 +657,10 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
                 </div>
               )}
             </div>
-            <section className="quick-keys" aria-label="Quick Add">
-              <div className="quick-title"><h2>Quick Add</h2>{quickKeys.length === 0 && <small>No quick items yet.</small>}<button className="text" onClick={() => requireElevation('Approve managing Quick Add buttons.', () => window.location.assign('/admin/register-settings/'))}>Manage</button></div>
-              {quickKeys.length > 0 && <>
-                <div className="quick-groups"><button className={quickGroup === 'All' ? 'active' : ''} onClick={() => setQuickGroup('All')}>All</button>{[...new Set(quickKeys.map((key) => key.groupName))].map((group) => <button className={quickGroup === group ? 'active' : ''} key={group} onClick={() => setQuickGroup(group)}>{group}</button>)}</div>
-                <div className="quick-grid">{quickKeys.filter((key) => quickGroup === 'All' || key.groupName === quickGroup).map((key) => <button key={key.id} disabled={!key.active || key.priceMinor === null} onClick={() => addItem(key)}><strong>{key.label}</strong><small>{key.priceMinor ? money(key.priceMinor) : 'No price'}</small></button>)}</div>
-              </>}
-            </section>
             <div className="cart-head">
-              <h2>Current sale</h2>
-              <button className="text" onClick={() => { setCart([]); clearAdjustments(); }}>
-                Clear cart
-              </button>
+              <h2>Current sale <small>{cart.reduce((sum, line) => sum + line.quantity, 0)} items</small></h2>
+              {restricted && <button className={`age-banner${ageVerified ? ' ok' : ''}`} onClick={() => setUtility('age')}>{ageVerified ? '✓ Age verified' : '21+ items · check age'}</button>}
+              <button className="text" onClick={() => { setCart([]); clearAdjustments(); setCashTendered(''); }}>Clear cart</button>
             </div>
             <div className="cart">
               {cart.length === 0 && (
@@ -666,112 +675,83 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
               ))}
             </div>
           </section>
-          <aside className="checkout">
-            <h2>Checkout</h2>
-            <dl>
-              <div>
-                <dt>Subtotal</dt>
-                <dd>{money(subtotal)}</dd>
+          <aside className="pos-right">
+            <section className="quick-keys" aria-label="Quick Add">
+              <div className="quick-title">
+                <h2>Quick Add</h2>
+                <div className="quick-groups">
+                  <button className={quickGroup === 'All' ? 'active' : ''} onClick={() => { setQuickGroup('All'); setQuickPage(0); }}>All</button>
+                  {[...new Set(quickKeys.map((key) => key.groupName))].map((group) => <button className={quickGroup === group ? 'active' : ''} key={group} onClick={() => { setQuickGroup(group); setQuickPage(0); }}>{group}</button>)}
+                </div>
+                <button className="text" onClick={() => requireElevation('Approve managing Quick Add buttons.', () => window.location.assign('/admin/register-settings/'))}>Manage</button>
               </div>
-              {discount > 0n && (
-                <div>
-                  <dt>{adjustments.active ? 'Discounts' : 'Promotions'}</dt>
-                  <dd>−{money(discount)}</dd>
+              {quickKeys.length === 0 && <small className="quick-empty">No quick items yet.</small>}
+              <div className="qa-grid">
+                {Array.from({ length: QUICK_PAGE_SIZE }, (_, index) => {
+                  const key = pageKeys[index];
+                  return key
+                    ? <button key={key.id} disabled={!key.active || key.priceMinor === null} onClick={() => addItem(key)}><strong>{key.label}</strong><small>{key.priceMinor ? money(key.priceMinor) : 'No price'}</small></button>
+                    : <span key={`empty-${index}`} className="qa-empty" aria-hidden="true" />;
+                })}
+              </div>
+              {quickPages > 1 && (
+                <div className="qa-pager">
+                  <button aria-label="Previous Quick Add page" disabled={activeQuickPage === 0} onClick={() => setQuickPage(activeQuickPage - 1)}>‹ Prev</button>
+                  <span aria-live="polite">Page {activeQuickPage + 1} of {quickPages}</span>
+                  <button aria-label="Next Quick Add page" disabled={activeQuickPage >= quickPages - 1} onClick={() => setQuickPage(activeQuickPage + 1)}>Next ›</button>
                 </div>
               )}
-              <div>
-                <dt>Projected tax</dt>
-                <dd>{money(projectedTax)}</dd>
+            </section>
+            <section className="payment" aria-label="Payment">
+              {(customer || giftApplied || loyaltyPoints > 0) && (
+                <div className="applied-row">
+                  {customer && <button onClick={() => setUtility('customerPanel')}>{customer.name}{loyaltyPoints > 0 ? ` · ${loyaltyPoints} pts` : ''} ✎</button>}
+                  {giftApplied && <button onClick={() => setUtility('gift')}>Gift card {money(giftKeyed)} ✎</button>}
+                </div>
+              )}
+              <div className="totals" aria-label="Sale totals">
+                <div className="totals-detail">
+                  <span>Subtotal <b>{money(subtotal)}</b></span>
+                  {discount > 0n && <span>{adjustments.active ? 'Discounts' : 'Promotions'} <b>−{money(discount)}</b></span>}
+                  <span>Tax <b>{money(projectedTax)}</b></span>
+                </div>
+                <div className="total"><span>Total</span><b>{money(total)}</b></div>
               </div>
-              <div className="total">
-                <dt>Total</dt>
-                <dd>{money(total)}</dd>
+              <div className="tender-row" role="group" aria-label="Cash tendered">
+                {[5, 10, 20, 50, 100].map((amount) => <button key={amount} disabled={!cart.length || !sessionId} className={tenderedAmount === BigInt(amount * 100) ? 'active' : ''} onClick={() => setCashTendered(String(amount * 100))}>${amount}</button>)}
+                <button disabled={!cart.length || !sessionId} className={tenderedAmount !== null && tenderedAmount === dueNow ? 'active' : ''} onClick={() => setCashTendered(dueNow.toString())}>EXACT</button>
+                <button disabled={!cart.length || !sessionId} onClick={() => setUtility('tender')}>Other</button>
               </div>
-            </dl>
-            <section className="customer-panel">
-              <strong>{customer ? customer.name : 'Walk-in customer'}</strong>
-              {customer ? (
-                <>
-                  <small>
-                    {customer.pointsBalance ?? 0} points · projected earn {loyaltyProgram?.enabled ? Math.floor(Number(total) / Number(loyaltyProgram.spendMinor)) * loyaltyProgram.pointsEarned : 0}
-                  </small>
-                  <button
-                    className="text"
-                    onClick={() => {
-                      setCustomer(null);
-                      setLoyaltyPoints(0);
-                    }}
-                  >
-                    Remove customer
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div>
-                    <input aria-label="Customer search" value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Find customer" />
-                    <button onClick={() => void findCustomers()}>Find</button>
-                    <button onClick={() => setUtility('customer')}>New</button>
-                  </div>
-                  {customerResults.map((result) => (
-                    <button className="customer-result" key={result.id} onClick={() => void selectCustomer(result)}>
-                      {result.name} · {result.phone || result.email || 'No contact'}
-                    </button>
-                  ))}
-                </>
+              <div className="change-panel" aria-label="Cash change">
+                <div><span>Amount due</span><b>{money(dueNow)}</b></div>
+                <div><span>Tendered</span><b>{tenderedAmount === null ? '—' : money(tenderedAmount)}</b></div>
+                <div className={`change${shortBy > 0n ? ' short' : ''}`}><span>{shortBy > 0n ? 'Still due' : 'Change due'}</span><b>{money(shortBy > 0n ? shortBy : changeDue)}</b></div>
+              </div>
+              <div className="pay-buttons">
+                <button className="pay card" disabled={!cart.length || !sessionId} onClick={() => void checkout('terminal')}>CARD</button>
+                <button className="pay cash" disabled={!cart.length || !sessionId || shortBy > 0n} onClick={() => void checkout('cash', cashTendered || total.toString())}>CASH</button>
+              </div>
+              {splitActive && (
+                <div className="pay-buttons">
+                  <button className="pay cash" disabled={!cart.length || !sessionId} onClick={() => void mixedCheckout('CASH')}>Split with cash</button>
+                  <button className="pay card" disabled={!cart.length || !sessionId} onClick={() => void mixedCheckout('TERMINAL')}>Split with terminal</button>
+                </div>
               )}
             </section>
-            {customer && loyaltyProgram?.enabled && (
-              <label className="benefit-field">
-                Redeem loyalty points
-                <input aria-label="Loyalty points" type="number" min="0" max={customer.pointsBalance ?? 0} value={loyaltyPoints} onChange={(event) => setLoyaltyPoints(Number(event.target.value) || 0)} />
-              </label>
-            )}
-            <div className="gift-fields">
-              <label>
-                Gift-card code
-                <input aria-label="Gift-card code" value={giftCode} onChange={(event) => setGiftCode(event.target.value)} />
-              </label>
-              <label>
-                Redeem cents
-                <input aria-label="Gift-card amount" type="number" min="0" value={giftAmount} onChange={(event) => setGiftAmount(event.target.value)} />
-              </label>
-            </div>
-            {cart.some((line) => line.ageRestricted) && (
-              <label className="age">
-                <input type="checkbox" checked={ageVerified} onChange={(event) => setAgeVerified(event.target.checked)} />I verified the customer is of legal age.
-              </label>
-            )}
-            <div className="payment-row">
-              <button className="pay card" disabled={!cart.length || !sessionId} onClick={() => void checkout('terminal')}>CARD</button>
-              <button className="pay cash" disabled={!cart.length || !sessionId} onClick={() => void checkout('cash', cashTendered || total.toString())}>CASH</button>
-              {[5, 10, 20, 50, 100].map((amount) => <button key={amount} disabled={!cart.length || !sessionId || BigInt(amount * 100) < total} onClick={() => { setCashTendered(String(amount * 100)); void checkout('cash', String(amount * 100)); }}>${amount}</button>)}
-              <button disabled={!cart.length || !sessionId} onClick={() => void checkout('cash', total.toString())}>EXACT</button>
-            </div>
-            {(giftCode || loyaltyPoints > 0) && (
-              <>
-                <button className="pay cash" disabled={!cart.length || !sessionId} onClick={() => void mixedCheckout('CASH')}>
-                  Split with cash
-                </button>
-                <button className="pay card" disabled={!cart.length || !sessionId} onClick={() => void mixedCheckout('TERMINAL')}>
-                  Split with terminal
-                </button>
-              </>
-            )}
-            <small>Final pricing, benefits, and inventory are verified by the server.</small>
           </aside>
         </div>
         <div className="action-bar" aria-label="Register actions">
           <button onClick={() => requireElevation('Approve a discount or custom price.', () => setUtility('discount'))}>Discount / Price</button>
           <button className={priceCheckMode ? 'confirmed' : ''} onClick={() => { setPriceCheckMode(true); scanInput.current?.focus(); setMessage('Price-check mode: scan or select an item. It will not be added to the cart.'); }}>Price Check</button>
-          <button onClick={() => document.querySelector<HTMLInputElement>('[aria-label="Customer search"]')?.focus()}>Customer</button>
-          <button disabled={!cart.some((line) => line.ageRestricted)} className={ageVerified ? 'confirmed' : ''} onClick={() => setAgeVerified((value) => !value)}>Age Check</button>
+          <button className={customer ? 'confirmed' : ''} onClick={() => setUtility('customerPanel')}>Customer</button>
+          <button className={ageVerified ? 'confirmed' : ''} onClick={() => setUtility('age')}>Age Check</button>
           <button disabled={!cart.length} onClick={() => void holdSale()}>Hold</button>
           <button onClick={() => void showHeld()}>Resume</button>
           <button disabled={!cart.length} className="danger" onClick={voidCart}>Void Cart</button>
           <button onClick={() => requireElevation('Approve a return.', () => void showReturns())}>Return</button>
           <button disabled={!receipt} onClick={() => void printCurrentReceipt()}>Reprint</button>
           <button onClick={() => requireElevation('Approve opening the cash drawer.', () => setUtility('drawer'))}>Drawer</button>
-          <button onClick={() => document.querySelector<HTMLInputElement>('[aria-label="Gift-card code"]')?.focus()}>Gift Card</button>
+          <button className={giftApplied ? 'confirmed' : ''} onClick={() => setUtility('gift')}>Gift Card</button>
           <button disabled={!sessionId && !clockedIn} className="danger" onClick={() => beginClose(true)}>End Shift</button>
         </div>
       </>)}
@@ -790,13 +770,23 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
           <button onClick={() => setView('register')}>Back to register</button>
         </section>
       )}
-      {utility !== 'none' && (
+      {utility === 'age' && (
+        <div className="modal" role="dialog" aria-label="age utility">
+          <section className="age-modal">
+            <AgeCheckDialog timeZone={storeTimezone} needsVerification={cart.some((line) => line.ageRestricted)} alreadyVerified={ageVerified} onClose={closeUtility} onVerified={() => { setAge(true); const action = pendingAction.current; pendingAction.current = null; setUtility('none'); setMessage('Age verified for this sale.'); action?.(); }} />
+          </section>
+        </div>
+      )}
+      {utility !== 'none' && utility !== 'age' && (
         <div className="modal" role="dialog" aria-label={`${utility} utility`}>
           <section className="utility-modal">
             <button className="close" aria-label="Close" onClick={closeUtility}>×</button>
             {utility === 'resume' && <><h2>Resume a held sale</h2>{heldTransactions.length === 0 ? <p>No held sales on this register.</p> : heldTransactions.map((held) => <button className="held-sale" key={held.id} onClick={() => void resumeSale(held.id)}><strong>{held.label}</strong><span>{new Date(held.heldAt).toLocaleTimeString()} · {held.employee.firstName} {held.employee.lastName}</span><small>{held.cartJson.lines.length} lines{held.customer ? ` · ${held.customer.name}` : ''}</small></button>)}</>}
             {utility === 'return' && <><h2>Return items</h2>{!returnOrder ? <>{history.filter((order) => ['COMPLETED', 'PARTIALLY_REFUNDED'].includes(order.status)).map((order) => <button className="held-sale" key={order.id} onClick={() => void selectReturnOrder(order.id)}><strong>{order.orderNumber}</strong><span>{order.status}</span><small>{money(order.totalMinor)}</small></button>)}{history.every((order) => !['COMPLETED', 'PARTIALLY_REFUNDED'].includes(order.status)) && <p>No refundable orders found.</p>}</> : <><button className="text" onClick={() => setReturnOrder(null)}>← Choose another order</button><p><strong>{returnOrder.orderNumber}</strong></p>{returnOrder.items.map((item) => { const remaining = item.quantity - refundedQuantity(returnOrder, item.id); return <label className="return-line" key={item.id}><span>{item.productNameSnapshot} · {item.variantNameSnapshot}<small>{remaining} available to return</small></span><input aria-label={`Return quantity for ${item.productNameSnapshot}`} type="number" min="0" max={remaining} disabled={remaining === 0} value={returnQuantities[item.id] ?? 0} onChange={(event) => setReturnQuantities((current) => ({ ...current, [item.id]: Math.min(remaining, Math.max(0, Number(event.target.value) || 0)) }))} /></label>; })}<label>Required reason<input aria-label="Return reason" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} /></label><button className="danger" disabled={!returnReason.trim() || !Object.values(returnQuantities).some((quantity) => quantity > 0)} onClick={() => void submitReturn()}>Confirm refund and return to stock</button></>}</>}
             {utility === 'approve' && <ElevationDialog reason={approveReason} onGranted={(granted) => { grantElevation(granted); const action = pendingAction.current; pendingAction.current = null; setUtility('none'); action?.(); }} />}
+            {utility === 'customerPanel' && <CustomerDialog customer={customer} program={loyaltyProgram} points={loyaltyPoints} projectedEarn={loyaltyProgram?.enabled ? Math.floor(Number(total) / Number(loyaltyProgram.spendMinor)) * loyaltyProgram.pointsEarned : 0} search={customerSearch} results={customerResults} onSearch={setCustomerSearch} onFind={() => void findCustomers()} onSelect={(picked) => { setUtility('none'); void selectCustomer(picked); }} onNew={() => setUtility('customer')} onRemove={() => { setCustomer(null); setLoyaltyPoints(0); }} onPoints={setLoyaltyPoints} onClose={closeUtility} />}
+            {utility === 'gift' && <GiftCardDialog code={giftCode} amountMinor={giftAmount} onApply={(code, amountMinor) => { setGiftCode(code); setGiftAmount(amountMinor); setUtility('none'); setMessage('Gift card applied. Use Split with cash or terminal for the remainder.'); }} onClear={() => { setGiftCode(''); setGiftAmount('0'); setUtility('none'); }} />}
+            {utility === 'tender' && <TenderDialog dueMinor={dueNow} onSet={(amount) => { setCashTendered(amount.toString()); setUtility('none'); }} />}
             {utility === 'open' && <OpenRegisterDialog onOpen={(cash, note) => void openRegister(cash, note)} />}
             {utility === 'customer' && <CustomerCreateForm onCreated={(created) => { setUtility('none'); void selectCustomer(created); setMessage(`${created.name} added and selected.`); }} />}
             {utility === 'discount' && <DiscountDialog hasAdjustments={adjustments.active} lines={cart.map((line) => ({ variantId: line.variantId, productName: line.productName, variantName: line.variantName, priceMinor: line.priceMinor, quantity: line.quantity }))} onClear={() => { clearAdjustments(); setUtility('none'); setMessage('Discounts removed.'); }} onApply={(target, adjustment) => { if (target.scope === 'cart') setCartAdjustment(adjustment); else setLineAdjustments((current) => ({ ...current, [target.variantId]: adjustment })); setUtility('none'); setMessage('Discount applied. Totals updated.'); }} />}
@@ -806,10 +796,15 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
           </section>
         </div>
       )}
-      {receipt && (
+      {saleSummary && (
+        <div className="modal" role="dialog" aria-label="Sale complete">
+          <SaleCompleteDialog summary={saleSummary} onDone={() => { setSaleSummary(null); scanInput.current?.focus(); }} onReceipt={() => { setSaleSummary(null); setReceiptOpen(true); }} />
+        </div>
+      )}
+      {receipt && receiptOpen && (
         <div className="modal" role="dialog" aria-label="Receipt">
           <section className="receipt">
-            <button className="close" onClick={() => setReceipt(null)}>
+            <button className="close" aria-label="Close receipt" onClick={() => setReceiptOpen(false)}>
               ×
             </button>
             <span className="eyebrow">RJ POS · Downtown</span>

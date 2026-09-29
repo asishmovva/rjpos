@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, friendlyError, money, parseDollarsToMinor, parsePercentToBasisPoints, type PriceAdjustment } from './register-api';
+import { evaluateBirthDate, formatUsDate, latestEligibleBirthDate, todayInZone, type AgeResult } from './age';
 
 export type Elevation = { token: string; expiresAt: string; approver: { id: string; name: string; role: string } };
 export type ShiftReport = {
@@ -145,4 +146,121 @@ export function ShiftReportView({ report }: { report: ShiftReport }): React.Reac
       {detail.channels.map((channel) => <div className="receipt-line" key={channel.channel}><span>{channel.channel.replace(/_/g, ' ').toLowerCase()} ({channel.orderCount})</span><b>{money(channel.totalMinor)}</b></div>)}
     </section>}
   </>;
+}
+
+/**
+ * Compact age tool: the latest eligible birth date, a typed date of birth, and an explicit CHECK AGE step.
+ * The date of birth lives only in this component's state; it is never stored or sent anywhere.
+ */
+export function AgeCheckDialog({ timeZone, needsVerification, alreadyVerified, onVerified, onClose }: {
+  timeZone: string | undefined; needsVerification: boolean; alreadyVerified: boolean; onVerified: () => void; onClose: () => void;
+}): React.ReactNode {
+  const today = todayInZone(timeZone);
+  const [dob, setDob] = useState({ month: '', day: '', year: '' });
+  const [result, setResult] = useState<AgeResult | null>(null);
+  const dayRef = useRef<HTMLInputElement>(null);
+  const yearRef = useRef<HTMLInputElement>(null);
+  function edit(key: 'month' | 'day' | 'year', value: string): void {
+    const digits = value.replace(/\D/g, '');
+    setDob((current) => ({ ...current, [key]: digits }));
+    setResult(null);
+    if (key === 'month' && digits.length === 2) dayRef.current?.focus();
+    if (key === 'day' && digits.length === 2) yearRef.current?.focus();
+  }
+  function check(): void { setResult(evaluateBirthDate(dob, today)); }
+  const eligible = result?.status === 'ok' && result.eligible;
+  return <>
+    <div className="age-title"><h2>AGE CHECK</h2><button className="close" aria-label="Close" onClick={onClose}>×</button></div>
+    <p className="age-cutoff">Must be born on or before<strong>{formatUsDate(latestEligibleBirthDate(today))}</strong></p>
+    <form className="dob-fields" onSubmit={(event) => { event.preventDefault(); check(); }}>
+      <label>Month<input aria-label="Month" inputMode="numeric" maxLength={2} autoFocus placeholder="MM" value={dob.month} onChange={(event) => edit('month', event.target.value)} /></label>
+      <label>Day<input aria-label="Day" ref={dayRef} inputMode="numeric" maxLength={2} placeholder="DD" value={dob.day} onChange={(event) => edit('day', event.target.value)} /></label>
+      <label>Year<input aria-label="Year" ref={yearRef} inputMode="numeric" maxLength={4} placeholder="YYYY" value={dob.year} onChange={(event) => edit('year', event.target.value)} /></label>
+      <button className="check-age" type="submit">CHECK AGE</button>
+    </form>
+    <div className="age-outcome" role="status">
+      {result?.status === 'incomplete' && <p className="age-result neutral">Enter month, day, and a 4-digit year.</p>}
+      {result?.status === 'invalid' && <p className="age-result ineligible">{result.reason}</p>}
+      {result?.status === 'ok' && <p className={`age-result ${result.eligible ? 'eligible' : 'ineligible'}`}>{result.eligible ? `ELIGIBLE — Age ${result.age}` : `NOT ELIGIBLE — Age ${result.age}`}</p>}
+      {!result && alreadyVerified && needsVerification && <p className="age-result eligible">Age already confirmed for this sale.</p>}
+    </div>
+    {eligible && needsVerification && !alreadyVerified && <button className="confirm-age" onClick={onVerified}>CONFIRM AGE CHECK</button>}
+  </>;
+}
+
+/** Find, select, or remove the customer for this sale (and redeem loyalty points). New customers use the create form. */
+export function CustomerDialog({ customer, program, points, projectedEarn, search, results, onSearch, onFind, onSelect, onNew, onRemove, onPoints, onClose }: {
+  customer: CustomerRecord | null; program: { enabled: boolean } | null; points: number; projectedEarn: number; search: string; results: CustomerRecord[];
+  onSearch: (value: string) => void; onFind: () => void; onSelect: (customer: CustomerRecord) => void; onNew: () => void; onRemove: () => void; onPoints: (points: number) => void; onClose: () => void;
+}): React.ReactNode {
+  return <>
+    <h2>Customer</h2>
+    {customer ? <>
+      <div className="customer-card"><strong>{customer.name}</strong><span>{customer.pointsBalance ?? 0} points · projected earn {projectedEarn}</span></div>
+      {program?.enabled && <label>Redeem loyalty points<input aria-label="Loyalty points" type="number" inputMode="numeric" min="0" max={customer.pointsBalance ?? 0} value={points || ''} placeholder="0" onChange={(event) => onPoints(Number(event.target.value) || 0)} /></label>}
+      <button className="danger" onClick={() => { onRemove(); onClose(); }}>Remove customer</button>
+      <button className="primary" onClick={onClose}>Done</button>
+    </> : <>
+      <form className="customer-search" onSubmit={(event) => { event.preventDefault(); onFind(); }}>
+        <input aria-label="Customer search" autoFocus placeholder="Name, phone, or email" value={search} onChange={(event) => onSearch(event.target.value)} />
+        <button>Find</button>
+      </form>
+      <div className="customer-results">{results.map((result) => <button className="held-sale" key={result.id} onClick={() => onSelect(result)}><strong>{result.name}</strong><span>{result.phone || result.email || 'No contact'}</span></button>)}</div>
+      <button onClick={onNew}>New customer</button>
+    </>}
+  </>;
+}
+
+/** Gift card code and the amount to redeem (entered in dollars, held as cents). */
+export function GiftCardDialog({ code, amountMinor, onApply, onClear }: { code: string; amountMinor: string; onApply: (code: string, amountMinor: string) => void; onClear: () => void }): React.ReactNode {
+  const [giftCode, setGiftCode] = useState(code);
+  const [amount, setAmount] = useState(amountMinor !== '0' && /^\d+$/.test(amountMinor) ? (Number(amountMinor) / 100).toFixed(2) : '');
+  const minor = parseDollarsToMinor(amount);
+  return <>
+    <h2>Gift card</h2>
+    <form onSubmit={(event) => { event.preventDefault(); if (minor !== null && minor > 0n && giftCode.trim()) onApply(giftCode.trim(), minor.toString()); }}>
+      <label>Gift-card code<input aria-label="Gift-card code" autoFocus autoComplete="off" value={giftCode} onChange={(event) => setGiftCode(event.target.value)} /></label>
+      <label>Amount to redeem ($)<input aria-label="Gift-card amount" inputMode="decimal" placeholder="0.00" value={amount} onChange={(event) => setAmount(event.target.value.replace(/[^\d.$]/g, ''))} /></label>
+      {amount && (minor === null || minor === 0n) && <p className="warning" role="alert">Enter an amount greater than zero, for example 25.00.</p>}
+      <button className="primary" disabled={!giftCode.trim() || minor === null || minor === 0n}>Apply gift card</button>
+    </form>
+    {(code || amountMinor !== '0') && <button className="quiet" onClick={onClear}>Remove gift card</button>}
+  </>;
+}
+
+const KEYPAD_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'] as const;
+/** Touch keypad for a custom cash tender, with the change preview updating as digits are entered. */
+export function TenderDialog({ dueMinor, onSet }: { dueMinor: bigint; onSet: (tenderedMinor: bigint) => void }): React.ReactNode {
+  const [text, setText] = useState('');
+  const minor = parseDollarsToMinor(text);
+  const short = minor !== null && minor < dueMinor;
+  function press(key: (typeof KEYPAD_KEYS)[number]): void {
+    setText((current) => {
+      if (key === '⌫') return current.slice(0, -1);
+      if (key === '.') return current.includes('.') ? current : `${current || '0'}.`;
+      const next = current + key;
+      return parseDollarsToMinor(next) === null ? current : next;
+    });
+  }
+  return <>
+    <h2>Cash tendered</h2>
+    <div className="tender-display" aria-live="polite"><span>Amount due</span><b>{money(dueMinor)}</b></div>
+    <div className="tender-display"><span>Tendered</span><b aria-label="Tendered amount">{text ? `$${text}` : '$0.00'}</b></div>
+    <div className={`tender-display change ${short ? 'short' : ''}`}><span>{short ? 'Still due' : 'Change due'}</span><b>{minor === null ? '$0.00' : money(short ? dueMinor - minor : minor - dueMinor)}</b></div>
+    <div className="keypad">{KEYPAD_KEYS.map((key) => <button type="button" key={key} onClick={() => press(key)}>{key}</button>)}</div>
+    <button className="primary" disabled={minor === null || short} onClick={() => minor !== null && onSet(minor)}>Use this amount</button>
+  </>;
+}
+
+export type SaleSummary = { totalMinor: string; tenderedMinor: string; changeDueMinor: string };
+/** Full-screen confirmation after a cash sale: change due is the largest thing on screen. */
+export function SaleCompleteDialog({ summary, onDone, onReceipt }: { summary: SaleSummary; onDone: () => void; onReceipt: () => void }): React.ReactNode {
+  return <section className="sale-complete">
+    <h2>SALE COMPLETE</h2>
+    <div className="sale-line"><span>Total</span><b>{money(summary.totalMinor)}</b></div>
+    <div className="sale-line"><span>Cash Tendered</span><b>{money(summary.tenderedMinor)}</b></div>
+    <div className="change-due"><span>CHANGE DUE</span><b aria-label="Change due">{money(summary.changeDueMinor)}</b></div>
+    <button className="primary done" autoFocus onClick={onDone}>DONE / NEXT SALE</button>
+    <button className="quiet" onClick={onReceipt}>View receipt</button>
+  </section>;
 }

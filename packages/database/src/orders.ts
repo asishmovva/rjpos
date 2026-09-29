@@ -103,12 +103,15 @@ async function restoreInventory(tx: Tx, input: {
   for (const line of input.lines) {
     const variant = await tx.productVariant.findFirst({ where: { id: line.variantId, organizationId: input.organizationId }, include: { product: true } });
     if (!variant?.product.inventoryTracked) continue;
-    await tx.$queryRaw`SELECT id FROM "InventoryLevel" WHERE "organizationId" = ${input.organizationId}::uuid AND "storeId" = ${input.storeId}::uuid AND "variantId" = ${line.variantId}::uuid FOR UPDATE`;
+    // Pack variants return stock to their base variant: quantity × unitsPerPack base units.
+    const stockVariantId = variant.baseVariantId ?? variant.id;
+    const stockQuantity = line.quantity * (variant.baseVariantId ? variant.unitsPerPack : 1);
+    await tx.$queryRaw`SELECT id FROM "InventoryLevel" WHERE "organizationId" = ${input.organizationId}::uuid AND "storeId" = ${input.storeId}::uuid AND "variantId" = ${stockVariantId}::uuid FOR UPDATE`;
     await tx.inventoryLevel.update({ where: { organizationId_storeId_variantId: {
-      organizationId: input.organizationId, storeId: input.storeId, variantId: line.variantId,
-    }}, data: { onHand: { increment: line.quantity } } });
+      organizationId: input.organizationId, storeId: input.storeId, variantId: stockVariantId,
+    }}, data: { onHand: { increment: stockQuantity } } });
     await tx.inventoryMovement.create({ data: { organizationId: input.organizationId, storeId: input.storeId,
-      variantId: line.variantId, quantityDelta: line.quantity, type: input.movementType,
+      variantId: stockVariantId, quantityDelta: stockQuantity, type: input.movementType,
       referenceType: input.movementType === 'VOID_REVERSAL' ? 'ORDER' : 'REFUND',
       referenceId: input.referenceId, employeeId: input.employeeId } });
   }

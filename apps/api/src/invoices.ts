@@ -2,7 +2,7 @@ import { Body, Controller, ForbiddenException, Get, Inject, Param, Patch, Post, 
 import { createHash } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import {
-  applyInvoiceOcrResult, confirmInvoiceDocument, createInvoiceDocument, getInvoiceDocument,
+  applyInvoiceOcrResult, confirmInvoiceDocument, createInvoiceDocument, getInvoiceDocument, getInvoiceReview,
   getInvoiceDocumentInput, listInvoiceDocuments, markInvoiceOcrFailed, markInvoiceOcrProcessing,
   rejectInvoiceDocument, updateInvoiceDocument, updateInvoiceLine, type AdminActor, PosError,
 } from '@rjpos/database';
@@ -34,6 +34,12 @@ export class InvoiceController {
   @Get()
   async list(@Req() request: TenantRequest) {
     return listInvoiceDocuments(this.prisma, await this.actor(request, 'purchase:read'));
+  }
+
+  /** Case economics, discrepancies, and available vendor deals for each line, computed for the review step. */
+  @Get(':invoiceId/review')
+  async review(@Req() request: TenantRequest, @Param('invoiceId') invoiceId: string) {
+    return getInvoiceReview(this.prisma, await this.actor(request, 'purchase:read'), invoiceId);
   }
 
   @Get(':invoiceId')
@@ -89,7 +95,7 @@ export class InvoiceController {
   }
 
   @Post(':invoiceId/confirm')
-  async confirm(@Req() request: TenantRequest, @Param('invoiceId') invoiceId: string, @Body() body: { acknowledgeDuplicate?: boolean }) {
-    return confirmInvoiceDocument(this.prisma, await this.actor(request, 'purchase:manage'), invoiceId, body.acknowledgeDuplicate === true);
+  async confirm(@Req() request: TenantRequest, @Param('invoiceId') invoiceId: string, @Body() body: { acknowledgeDuplicate?: boolean; acknowledgeDiscrepancies?: boolean }) {
+    return confirmInvoiceDocument(this.prisma, await this.actor(request, 'purchase:manage'), invoiceId, body.acknowledgeDuplicate === true, body.acknowledgeDiscrepancies === true);
   }
 }
