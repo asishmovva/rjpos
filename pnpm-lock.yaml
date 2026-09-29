@@ -103,6 +103,9 @@ importers:
       '@rjpos/api-client':
         specifier: workspace:*
         version: link:../../packages/api-client
+      '@rjpos/domain-types':
+        specifier: workspace:*
+        version: link:../../packages/domain-types
       next:
         specifier: ^16.0.0
         version: 16.3.5(@types/node@24.13.6)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)

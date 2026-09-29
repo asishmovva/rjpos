@@ -5,6 +5,7 @@ import { adminApi, createCatalogFlow, money, type CatalogLookupResult, type Cate
 import { EmployeeEditor } from './employee-editor';
 import { PromotionsView, ReplenishmentView, StockCountsView, TransfersView } from './phase-five-views';
 import './admin.css';
+import './costing.css';
 
 const areas = ['Dashboard', 'Products', 'Categories', 'Inventory', 'Transfers', 'Stock Counts', 'Inventory Variances', 'Replenishment', 'Promotions', 'Master Catalog', 'Vendors', 'Vendor Mappings', 'Purchase Orders', 'Receiving History', 'Orders', 'Refunds', 'Employees', 'Customers', 'Loyalty', 'Gift Cards', 'Stores', 'Registers', 'Settings'] as const;
 type Area = (typeof areas)[number];
@@ -159,7 +160,10 @@ export default function AdminPage(): React.ReactNode {
         <nav aria-label="Back-office navigation">
           <a className="register-link" href="/admin/register-settings">Register &amp; hardware</a>
           <a className="register-link" href="/admin/reports">Reports &amp; exports</a>
-          <a className="register-link" href="/admin/invoices">Invoice receiving</a>
+          <a className="register-link" href="/admin/invoices/">Invoice receiving</a>
+          <a className="register-link" href="/admin/products/new/">New purchased product</a>
+          <a className="register-link" href="/admin/taxes/">Settings · Taxes</a>
+          <a className="register-link" href="/admin/price-books/">Settings · Price books</a>
           {areas.map((item) => (
             <button className={area === item ? 'active' : ''} key={item} onClick={() => switchArea(item)}>
               {item}
@@ -459,6 +463,7 @@ function ProductsView({ products, categories, stores, run }: { products: Product
               <Pill value={product.active ? 'ACTIVE' : 'INACTIVE'} />
             </td>
             <td>
+              <a className="costing-link" href={`/admin/product/?id=${product.id}`}>Details</a>{' '}
               <button
                 onClick={() => {
                   const name = window.prompt('Product name', product.name);

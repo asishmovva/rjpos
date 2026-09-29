@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client';
 import { findWorkspaceRoot, loadEnvironment } from '@rjpos/config';
 import { hashPin } from '../src/pin.js';
 import { importMasterCatalogCsv } from '../src/purchasing.js';
+import { ensureSystemTaxProfiles } from '../src/tax-profiles.js';
 
 const environment = loadEnvironment();
 const prisma = new PrismaClient({ datasources: { db: { url: environment.DATABASE_URL } } });
@@ -131,6 +132,11 @@ async function main(): Promise<void> {
     const opening = await prisma.inventoryMovement.findFirst({ where: { organizationId: organization.id, storeId: store.id, variantId: variant.id, type: 'INITIAL' } });
     if (!opening) await prisma.inventoryMovement.create({ data: { organizationId: organization.id, storeId: store.id,
       variantId: variant.id, quantityDelta: 24, type: 'INITIAL', referenceType: 'SEED', referenceId: 'PHASE_1_DEMO' } });
+  }
+  await ensureSystemTaxProfiles(prisma, organization.id);
+  // Editable named price books for special/channel pricing (not hardcoded in code).
+  for (const [index, name] of ['Price A', 'Price B', 'DoorDash', 'Uber Eats'].entries()) {
+    await prisma.priceBook.upsert({ where: { organizationId_name: { organizationId: organization.id, name } }, update: {}, create: { organizationId: organization.id, name, sortOrder: index + 1 } });
   }
   const masterCatalogCsv = readFileSync(join(findWorkspaceRoot(), 'CategorizedItemList.csv'), 'utf8');
   const masterCatalogSummary = await importMasterCatalogCsv(prisma, {

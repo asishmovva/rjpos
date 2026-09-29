@@ -2,7 +2,10 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { adminApi, money, type Category, type InvoiceDocument, type InvoiceLine, type InventoryRow, type Store, type Vendor } from '../admin-client';
+import { costingApi, type InvoiceReview } from '../costing-client';
+import { InvoiceReviewPanel } from './review-panel';
 import '../admin.css';
+import '../costing.css';
 
 type NewProductDraft = { categoryId: string; productName: string; variantName: string; sku: string; barcode: string; priceMinor: string };
 const emptyDraft: NewProductDraft = { categoryId: '', productName: '', variantName: 'Each', sku: '', barcode: '', priceMinor: '' };
@@ -29,6 +32,9 @@ export default function InvoicesPage(): React.ReactNode {
   const [matches, setMatches] = useState<Record<string, string>>({});
   const [drafts, setDrafts] = useState<Record<string, NewProductDraft>>({});
   const [duplicateAccepted, setDuplicateAccepted] = useState(false);
+  const [review, setReview] = useState<InvoiceReview | null>(null);
+  const [discrepanciesAccepted, setDiscrepanciesAccepted] = useState(false);
+  const refreshReview = async (id: string) => { try { setReview(await costingApi.invoiceReview(id)); } catch { setReview(null); } setDiscrepanciesAccepted(false); };
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -43,7 +49,7 @@ export default function InvoicesPage(): React.ReactNode {
   useEffect(() => { void load().catch((cause) => setError(cause instanceof Error ? cause.message : 'Could not load invoices.')); }, []);
   async function run(operation: () => Promise<InvoiceDocument>, success: string): Promise<void> {
     setBusy(true); setError(''); setMessage('');
-    try { const result = await operation(); setDocument(result); setMessage(success); await load(); }
+    try { const result = await operation(); setDocument(result); setMessage(success); await load(); if (result.reviewStatus === 'DRAFT') await refreshReview(result.id); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Invoice operation failed.'); }
     finally { setBusy(false); }
   }
@@ -54,7 +60,7 @@ export default function InvoicesPage(): React.ReactNode {
   async function open(id: string): Promise<void> {
     setBusy(true); setError('');
     try {
-      const result = await adminApi.invoice(id); setDocument(result); setVendorId(result.vendor?.id ?? ''); setStoreId(result.store.id);
+      const result = await adminApi.invoice(id); setDocument(result); setVendorId(result.vendor?.id ?? ''); setStoreId(result.store.id); await refreshReview(id);
       setDrafts(Object.fromEntries(result.lines.map((line) => [line.id, { categoryId: categories[0]?.id ?? '', productName: line.masterProduct?.name ?? line.description,
         variantName: line.masterProduct?.sizeLabel ?? 'Each', sku: `INV-${line.upc || line.lineNumber}`, barcode: line.upc ?? '', priceMinor: '' }])));
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not open invoice.'); }
@@ -110,8 +116,10 @@ export default function InvoicesPage(): React.ReactNode {
             </>}</td><td><button onClick={() => void updateLine(line, { ignored: !line.ignored }, line.ignored ? 'Line restored.' : 'Line ignored.')}>{line.ignored ? 'Restore' : 'Ignore'}</button></td></tr>;
         })}
       </tbody></table></div>
+      {review && <InvoiceReviewPanel document={document} review={review} disabled={busy || document.reviewStatus !== 'DRAFT'} onToggleVendorCost={(lineId, value) => { const line = document.lines.find((candidate) => candidate.id === lineId); if (line) void updateLine(line, { updateVendorCost: value }, value ? 'Vendor cost will be updated when you confirm.' : 'Vendor cost will be left unchanged.'); }} />}
+      {review?.hasDiscrepancies && document.reviewStatus === 'DRAFT' && <label className="warning"><input type="checkbox" checked={discrepanciesAccepted} onChange={(event) => setDiscrepanciesAccepted(event.target.checked)} /> I reviewed the discrepancies above and accept them.</label>}
       {document.possibleDuplicate && <label className="warning"><input type="checkbox" checked={duplicateAccepted} onChange={(event) => setDuplicateAccepted(event.target.checked)} /> I reviewed the possible duplicate and intend to receive it.</label>}
-      <div className="invoice-actions"><button disabled={busy || document.reviewStatus !== 'DRAFT'} onClick={() => void run(() => adminApi.retryInvoiceOcr(document.id), 'OCR rerun completed; review matches again.')}>Retry OCR</button><button disabled={busy || document.reviewStatus !== 'DRAFT'} onClick={() => void run(() => adminApi.rejectInvoice(document.id), 'Invoice rejected; no inventory was changed.')}>Reject</button><button className="primary" disabled={busy || document.reviewStatus !== 'DRAFT' || document.ocrStatus !== 'COMPLETED' || unresolved || !document.vendor || (document.possibleDuplicate && !duplicateAccepted)} onClick={() => void run(() => adminApi.confirmInvoice(document.id, duplicateAccepted), 'Invoice confirmed and inventory received through the purchase ledger.')}>Confirm receiving</button></div>
+      <div className="invoice-actions"><button disabled={busy || document.reviewStatus !== 'DRAFT'} onClick={() => void run(() => adminApi.retryInvoiceOcr(document.id), 'OCR rerun completed; review matches again.')}>Retry OCR</button><button disabled={busy || document.reviewStatus !== 'DRAFT'} onClick={() => void run(() => adminApi.rejectInvoice(document.id), 'Invoice rejected; no inventory was changed.')}>Reject</button><button className="primary" disabled={busy || document.reviewStatus !== 'DRAFT' || document.ocrStatus !== 'COMPLETED' || unresolved || !document.vendor || (document.possibleDuplicate && !duplicateAccepted) || (review?.hasDiscrepancies === true && !discrepanciesAccepted)} onClick={() => void run(() => adminApi.confirmInvoice(document.id, duplicateAccepted, discrepanciesAccepted), 'Invoice confirmed and inventory received through the purchase ledger.')}>Confirm receiving</button></div>
     </section>}
   </main>;
 }

@@ -1,0 +1,182 @@
+/* Cashier register layout: cart on the left, totals/payment/Quick Add on the right. Loaded after register.css. */
+:root{--hdr:72px;--bar:68px;--ink-strong:#14261e}
+.topbar{height:var(--hdr);min-height:0;padding:6px 16px;gap:14px;flex-wrap:nowrap;overflow:hidden}
+.topbar h1{font-size:18px;margin:0;white-space:nowrap}
+.topbar .eyebrow{font-size:10px}
+.topbar .status{white-space:nowrap;padding:6px 12px;font-size:13px}
+.topbar .cashier-summary{min-width:0}
+.topbar .cashier-summary strong{font-size:14px;white-space:nowrap}
+.topbar .cashier-summary small{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topbar nav{flex:none}
+.topbar nav button{min-height:48px;padding:0 16px;font-size:16px}
+
+.pos{display:grid;grid-template-columns:minmax(0,62fr) minmax(0,38fr);gap:8px;padding:8px;height:calc(100vh - var(--hdr) - var(--bar));min-height:520px;box-sizing:border-box;overflow:hidden}
+.pos-left,.pos-right{min-width:0;min-height:0;display:flex;flex-direction:column;gap:6px}
+.pos-left{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.pos-left .session-actions{padding-bottom:6px;gap:10px;flex:none}
+.pos-left .session-actions button{min-height:46px;padding:0 16px;font-size:15px}
+.pos-left .session-actions p{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.pos-left .scanbox{margin:0;padding:8px;flex:none}
+.pos-left .scanbox input{min-height:52px}
+.pos-left .cart-head{flex:none;gap:10px}
+.pos-left .cart-head h2{font-size:20px;flex:1}
+.pos-left .cart-head h2 small{font-size:14px;color:var(--muted);font-weight:600;margin-left:6px}
+.pos-left .cart-head .text{min-height:44px;padding:0 12px;font-size:15px}
+.age-banner{min-height:44px;padding:0 14px;border-radius:10px;background:#fff0d7;color:#7a4a00;font-weight:800;font-size:15px}
+.age-banner.ok{background:#dcebe3;color:#14523a}
+.pos-left .cart{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}
+.pos-left .cart .empty{padding:40px 0;font-size:20px;color:var(--muted);text-align:center}
+.cart-swipe .line{padding:12px 14px;gap:14px;grid-template-columns:minmax(0,1fr) auto 110px}
+.cart-swipe .line strong{font-size:19px;line-height:1.2;overflow-wrap:anywhere}
+.cart-swipe .line small{font-size:14px;color:#3d4d44}
+.cart-swipe .line>b{font-size:22px;text-align:right;color:var(--ink-strong)}
+.cart-swipe .quantity button{width:52px;height:52px;font-size:24px;border-radius:10px}
+.cart-swipe .quantity input{width:56px;height:52px;font-size:22px;text-align:center}
+
+.pos-right>*{flex:none}
+.pos-right .totals{background:#163f31;color:#fff;border-radius:12px;padding:8px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.totals-detail{display:grid;gap:1px;font-size:14px;color:#cfe0d7}
+.totals-detail span{display:flex;justify-content:space-between;gap:16px}
+.totals-detail b{color:#fff;font-variant-numeric:tabular-nums}
+.pos-right .totals .total{display:grid;text-align:right;border:0;padding:0;margin:0}
+.pos-right .totals .total span{font-size:13px;color:#cfe0d7;text-transform:uppercase;letter-spacing:.06em}
+.pos-right .totals .total b{font-size:40px;line-height:1;font-variant-numeric:tabular-nums}
+.pos-right .customer-panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:6px 8px;margin:0;display:grid;gap:6px}
+.customer-row{display:flex;align-items:center;gap:6px}
+.customer-row>div{flex:1;min-width:0;display:grid}
+.customer-row small{color:var(--muted)}
+.customer-row input{flex:1;min-width:0;min-height:44px;padding:6px 10px;border:1px solid #bfcfc6;border-radius:8px;font-size:16px}
+.customer-row button{min-height:44px;padding:0 14px;border-radius:8px;background:#eef2ef;color:var(--ink-strong);font-weight:700}
+.customer-result{min-height:44px;text-align:left;padding:0 10px;border-radius:8px;background:#eef2ef;color:var(--ink-strong)}
+.pos-right .gift-fields{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0}
+.pos-right .gift-fields label{display:grid;gap:2px;font-size:11px;font-weight:700;color:#3d4d44}
+.pos-right .gift-fields input{min-height:40px;padding:4px 8px;border:1px solid #bfcfc6;border-radius:8px;font-size:15px}
+
+.payment{display:grid;gap:6px}
+.tender-row{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+.tender-row button{min-height:46px;padding:0 2px;border-radius:9px;background:#e9efeb;color:var(--ink-strong);font-weight:800;font-size:15px}
+.tender-row button.active{background:#d29b3d;color:#14261e;outline:3px solid #14261e33}
+.tender-row button:disabled{opacity:.45}
+.change-panel{display:grid;grid-template-columns:1fr 1fr 1.25fr;gap:6px}
+.change-panel>div{display:grid;gap:0;padding:6px 10px;background:#f0f4f1;border-radius:9px}
+.change-panel span{font-size:12px;font-weight:700;color:#3d4d44;text-transform:uppercase;letter-spacing:.04em}
+.change-panel b{font-size:20px;color:var(--ink-strong);font-variant-numeric:tabular-nums}
+.change-panel .change{background:#dcebe3}
+.change-panel .change b{font-size:26px;color:#14523a}
+.change-panel .change.short{background:#fde7e4}
+.change-panel .change.short b{color:#8d3026}
+.pay-buttons{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.pay-buttons button{min-height:58px;border-radius:10px;font-size:20px;font-weight:800}
+.pay-buttons .pay.cash{background:#1f6048;color:#fff}
+.pay-buttons .pay.card{background:#26332d;color:#fff}
+.pay-buttons button:disabled{opacity:.45}
+
+.pos-right .quick-keys{flex:1;min-height:0;display:flex;flex-direction:column;gap:5px;border:1px solid var(--line);border-radius:12px;background:var(--card);padding:6px;margin:0}
+.pos-right .quick-title{display:flex;align-items:center;gap:8px;margin:0;flex:none}
+.pos-right .quick-title h2{margin:0;font-size:16px}
+.pos-right .quick-groups{flex:1;display:flex;flex-wrap:wrap;gap:4px;overflow:hidden;max-height:40px;margin:0}
+.pos-right .quick-groups button{min-height:34px;padding:0 12px;border-radius:999px;background:#eef2ef;color:var(--ink-strong);font-size:13px;font-weight:700}
+.pos-right .quick-groups button.active{background:#1f6048;color:#fff}
+.pos-right .quick-title .text{min-height:34px;padding:0 8px}
+.quick-empty{color:var(--muted)}
+.qa-grid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));grid-template-rows:repeat(6,minmax(0,1fr));gap:4px}
+.qa-grid>button{min-height:0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:2px;border-radius:8px;background:#e5efe9;color:#163f31;border:2px solid transparent;text-align:center;overflow:hidden}
+.qa-grid>button strong{font-size:12px;line-height:1.15;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.qa-grid>button small{font-size:12px;font-weight:800;color:#14261e}
+.qa-grid>button:active{border-color:#d29b3d;transform:scale(.97)}
+.qa-grid>button:disabled{opacity:.45}
+.qa-empty{border-radius:8px;background:#f3f6f4}
+.qa-pager{display:flex;align-items:center;justify-content:space-between;flex:none}
+.qa-pager button{min-height:40px;padding:0 16px;border-radius:9px;background:#1f6048;color:#fff;font-weight:800}
+.qa-pager button:disabled{opacity:.4}
+.qa-pager span{font-weight:800;color:var(--ink-strong)}
+
+.action-bar{height:var(--bar);box-sizing:border-box}
+.action-bar button{min-height:52px;font-size:13px}
+
+.age-cutoff{font-size:20px;padding:12px;background:#eef2ef;border-radius:10px;text-align:center}
+.dob-fields{display:grid;grid-template-columns:1fr 1fr 1.6fr;gap:10px}
+.dob-fields input{text-align:center;font-size:26px!important;min-height:64px!important}
+.age-result{font-size:24px;font-weight:900;text-align:center;padding:16px;border-radius:12px}
+.age-result.eligible{background:#dcebe3;color:#14523a}
+.age-result.ineligible{background:#fde7e4;color:#8d3026}
+.tender-display{display:flex;justify-content:space-between;align-items:baseline;padding:8px 12px;background:#f0f4f1;border-radius:10px;margin:6px 0}
+.tender-display b{font-size:26px;font-variant-numeric:tabular-nums}
+.tender-display.change{background:#dcebe3}.tender-display.change b{color:#14523a;font-size:32px}
+.tender-display.short{background:#fde7e4}.tender-display.short b{color:#8d3026}
+.utility-modal .keypad{margin:8px 0}
+.sale-complete{width:min(560px,96vw);background:#fff;border-radius:18px;padding:28px;display:grid;gap:12px;text-align:center;box-shadow:0 20px 60px #0006}
+.sale-complete h2{margin:0;font-size:28px;letter-spacing:.06em;color:#14523a}
+.sale-line{display:flex;justify-content:space-between;font-size:24px;padding:4px 8px}
+.sale-line b{font-variant-numeric:tabular-nums}
+.change-due{display:grid;gap:2px;padding:18px;background:#dcebe3;border-radius:14px}
+.change-due span{font-size:22px;font-weight:900;letter-spacing:.1em;color:#14523a}
+.change-due b{font-size:84px;line-height:1;color:#14523a;font-variant-numeric:tabular-nums}
+.sale-complete .done{min-height:80px;font-size:26px;font-weight:900;border-radius:14px;background:#1f6048;color:#fff}
+.sale-complete .quiet{min-height:48px;border-radius:10px}
+
+@media(max-width:1100px){.topbar .cashier-summary small{display:none}.tender-row button{font-size:13px}.qa-grid>button strong{font-size:11px}}
+@media(max-height:760px){.pos-right .totals .total b{font-size:32px}.pay-buttons button{min-height:50px}.change-panel b{font-size:17px}.change-panel .change b{font-size:22px}}
+/* Density pass: give the 6 x 6 Quick Add grid the most room. */
+.pos-right{gap:5px}
+.pos-right .totals{padding:4px 14px}
+.pos-right .totals .total b{font-size:36px}
+.pos-right .customer-panel{padding:5px 6px;gap:5px}
+.customer-row input,.customer-row button{min-height:42px}
+.pos-right .gift-fields label{font-size:0}
+.pos-right .gift-fields input{min-height:38px;font-size:15px}
+.tender-row button{min-height:42px}
+.change-panel>div{padding:3px 10px}
+.change-panel span{font-size:11px}
+.change-panel b{font-size:18px}
+.change-panel .change b{font-size:24px}
+.pay-buttons button{min-height:52px;font-size:19px}
+.pos-right .quick-keys{padding:5px}
+.qa-grid>button strong{font-size:11px;line-height:1.05;max-height:2.2em;flex:none}
+.qa-grid>button small{flex:none;line-height:1.1;font-size:12px}
+.qa-grid>button{gap:0}
+
+/* Refinement: header controls, search first, 6-row cart, Quick Add on top, compact payment below. */
+.header-actions{display:flex;gap:6px;flex:none}
+.hdr-btn{min-height:46px;padding:0 14px;border-radius:9px;background:#ffffff24;color:#fff;font-weight:700;font-size:15px;white-space:nowrap}
+.hdr-btn.primary{background:#d29b3d;color:#14261e}
+.topbar nav{margin-left:auto}
+.pos-left .scanbox{padding:6px 8px}
+.scan-label{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.scan-label label{white-space:nowrap}
+.scan-label p{margin:0;min-width:0;font-size:13px;color:#3d4d44;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pos-left .cart{container-type:size}
+.pos-left .cart .cart-swipe{height:calc(100cqh / 6 - 4px);margin-bottom:4px}
+.pos-left .cart .cart-swipe .line{height:100%;box-sizing:border-box;padding:6px 14px;align-content:center;border-top:0;border:1px solid var(--line);border-radius:10px}
+.cart-swipe .line>div:first-child{display:flex;flex-wrap:wrap;align-items:center;column-gap:10px;min-width:0}
+.cart-swipe .line>div:first-child strong{flex:0 0 100%}
+.cart-swipe .line>div:first-child small{display:inline}
+.remove-line{display:inline;margin:0;min-height:36px;padding:0 6px}
+.pos-right{gap:6px}
+.pos-right .payment{flex:none;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:6px}
+.applied-row{display:flex;flex-wrap:wrap;gap:6px}
+.applied-row button{min-height:38px;padding:0 14px;border-radius:999px;background:#fff0d7;color:#7a4a00;font-weight:800;font-size:14px}
+.qa-grid>button strong{font-size:14px;line-height:1.1;max-height:2.25em}
+.qa-grid>button small{font-size:14px}
+.qa-grid{gap:5px}
+.age-modal{width:min(440px,94vw);background:#fff;border-radius:16px;padding:14px 18px 18px;display:grid;gap:10px;box-shadow:0 20px 60px #0006;max-height:none;overflow:visible;box-sizing:border-box}
+.age-title{display:flex;justify-content:space-between;align-items:center}
+.age-title h2{margin:0;font-size:24px;letter-spacing:.08em}
+.age-modal .close{position:static;width:46px;height:46px;border-radius:10px;font-size:26px;background:#eef2ef;color:#14261e}
+.age-modal .age-cutoff{display:grid;gap:2px;padding:8px;font-size:15px;color:#3d4d44;background:#eef2ef;border-radius:10px;text-align:center;margin:0}
+.age-modal .age-cutoff strong{font-size:30px;color:#14261e}
+.age-modal .dob-fields{display:grid;grid-template-columns:1fr 1fr 1.5fr;gap:8px;align-items:end}
+.age-modal .dob-fields label{display:grid;gap:4px;margin:0;font-size:13px;font-weight:700;color:#3d4d44}
+.age-modal .dob-fields input{width:100%;box-sizing:border-box;padding:0 6px;border:2px solid #bfcfc6;border-radius:10px;text-align:center}
+.age-modal .check-age{grid-column:1/-1;min-height:56px;border-radius:12px;background:#1f6048;color:#fff;font-size:20px;font-weight:900;letter-spacing:.05em}
+.age-outcome{min-height:60px;display:grid;align-items:center}
+.age-modal .age-result{margin:0;padding:12px;font-size:22px}
+.age-result.neutral{background:#eef2ef;color:#3d4d44;font-size:16px!important;font-weight:700}
+.confirm-age{min-height:60px;border-radius:12px;background:#d29b3d;color:#14261e;font-size:20px;font-weight:900}
+.customer-card{display:grid;gap:2px;padding:12px;background:#eef2ef;border-radius:10px;margin-bottom:8px}
+.customer-card span{color:#3d4d44}
+.customer-search{display:flex;gap:8px}
+.customer-search input{flex:1;min-width:0;min-height:52px;padding:0 12px;border:1px solid var(--line);border-radius:8px;font-size:18px}
+.customer-search button{min-height:52px;padding:0 20px;border-radius:8px;background:#1f6048;color:#fff;font-weight:800}
+.customer-results{max-height:240px;overflow-y:auto;margin:8px 0}
+.utility-modal>button.danger,.utility-modal>button.primary,.utility-modal>button.quiet{width:100%;margin-top:8px}

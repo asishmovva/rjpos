@@ -34,6 +34,7 @@ import { ReportingController } from './reporting.js';
 import { PhaseSevenController } from './phase-seven.js';
 import { InvoiceController, INVOICE_OCR_PROVIDER } from './invoices.js';
 import { ElevationController } from './elevation.js';
+import { CostingController } from './costing.js';
 import { LocalFixtureInvoiceOcrProvider, UnavailableInvoiceOcrProvider } from './invoice-ocr.js';
 
 const environment = loadEnvironment();
@@ -58,7 +59,7 @@ function productionHeaders(request: Request, response: Response, next: NextFunct
 }
 
 @Module({
-  controllers: [HealthController, CorePosController, BackOfficeController, PhaseThreeController, PurchasingController, PhaseFiveController, ReportingController, PhaseSevenController, InvoiceController, ElevationController],
+  controllers: [HealthController, CorePosController, BackOfficeController, PhaseThreeController, PurchasingController, PhaseFiveController, ReportingController, PhaseSevenController, InvoiceController, ElevationController, CostingController],
   providers: [
     HealthService,
     TenantContextService,

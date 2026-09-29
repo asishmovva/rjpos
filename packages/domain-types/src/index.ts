@@ -27,6 +27,24 @@ export const paymentAttemptStatuses = [
 export type PaymentAttemptStatus = (typeof paymentAttemptStatuses)[number];
 
 export {
+  applyVendorDeals,
+  baseUnitsConsumed,
+  divideRounded,
+  effectiveCost,
+  priceMetrics,
+  reviewInvoiceLine,
+  reviewInvoiceTotals,
+  suggestRetailPrice,
+  unitCostFromCase,
+  type CostBreakdown,
+  type InvoiceDiscrepancy,
+  type InvoiceLineReview,
+  type InvoiceTotalsReview,
+  type PriceMetrics,
+  type PricingMode,
+  type VendorDealInput,
+} from './pricing.js';
+export {
   addScannedVariant,
   calculateCartTotals,
   calculateChangeDue,

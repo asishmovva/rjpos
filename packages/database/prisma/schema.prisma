@@ -287,6 +287,11 @@ model Organization {
   heldTransactions       HeldTransaction[]
   invoiceDocuments       InvoiceDocument[]
   invoiceLines           InvoiceLine[]
+  taxProfiles            TaxProfile[]
+  priceBooks             PriceBook[]
+  specialPrices          SpecialPrice[]
+  vendorDeals            VendorDeal[]
+  costHistory            ProductCostHistory[]
 }
 
 model Store {
@@ -322,6 +327,7 @@ model Store {
   quickKeys           QuickKey[]
   heldTransactions    HeldTransaction[]
   invoiceDocuments    InvoiceDocument[]
+  specialPrices       SpecialPrice[]
 
   @@unique([organizationId, id])
   @@index([organizationId, name])
@@ -495,6 +501,10 @@ model Product {
   ageRestricted    Boolean          @default(false)
   inventoryTracked Boolean          @default(true)
   taxCategory      String           @default("STANDARD")
+  /// Incomplete purchasing information: a draft is inactive until it is completed.
+  draft            Boolean          @default(false)
+  taxProfileId     String?          @db.Uuid
+  taxProfile       TaxProfile?      @relation(fields: [organizationId, taxProfileId], references: [organizationId, id])
   organization     Organization     @relation(fields: [organizationId], references: [id])
   category         Category         @relation(fields: [organizationId, categoryId], references: [organizationId, id])
   variants         ProductVariant[]
@@ -517,6 +527,16 @@ model ProductVariant {
   active             Boolean                    @default(true)
   costMinor          BigInt?
   lowStockThreshold  Int                        @default(0)
+  /// Pack/selling variants draw stock from a base variant: a 6-pack sale consumes 6 base units.
+  baseVariantId      String?                    @db.Uuid
+  unitsPerPack       Int                        @default(1)
+  baseVariant        ProductVariant?            @relation("VariantPacks", fields: [organizationId, baseVariantId], references: [organizationId, id])
+  packVariants       ProductVariant[]           @relation("VariantPacks")
+  taxProfileId       String?                    @db.Uuid
+  taxProfile         TaxProfile?                @relation(fields: [organizationId, taxProfileId], references: [organizationId, id])
+  specialPrices      SpecialPrice[]
+  vendorDeals        VendorDeal[]
+  costHistory        ProductCostHistory[]
   organization       Organization               @relation(fields: [organizationId], references: [id])
   product            Product                    @relation(fields: [organizationId, productId], references: [organizationId, id])
   barcodes           Barcode[]
@@ -894,6 +914,9 @@ model OrderItem {
   totalMinor            BigInt
   currency              String         @default("USD") @db.Char(3)
   taxCategorySnapshot   String         @default("STANDARD")
+  taxRateBasisPointsSnapshot Int?
+  taxProfileNameSnapshot     String?
+  priceBookNameSnapshot      String?
   promotionId           String?        @db.Uuid
   promotionNameSnapshot String?
   order                 Order          @relation(fields: [organizationId, orderId], references: [organizationId, id])
@@ -1126,6 +1149,7 @@ model Vendor {
   mappings         VendorProductMapping[]
   purchaseOrders   PurchaseOrder[]
   invoiceDocuments InvoiceDocument[]
+  deals            VendorDeal[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, name])
@@ -1139,6 +1163,8 @@ model VendorProductMapping {
   variantId            String         @db.Uuid
   vendorSku            String?
   vendorCostMinor      BigInt
+  /// Case price the unit cost was derived from (vendorCostMinor = caseCostMinor / casePackQuantity, rounded).
+  caseCostMinor        BigInt?
   casePackQuantity     Int            @default(1)
   minimumOrderQuantity Int            @default(1)
   preferred            Boolean        @default(false)
@@ -1195,6 +1221,10 @@ model PurchaseOrderLine {
   orderedQuantity     Int
   receivedQuantity    Int                   @default(0)
   unitCostMinor       BigInt
+  unitsPerCase        Int?
+  caseCostMinor       BigInt?
+  discountPerCaseMinor BigInt?
+  rebatePerCaseMinor  BigInt?
   createdAt           DateTime              @default(now())
   organization        Organization          @relation(fields: [organizationId], references: [id])
   purchaseOrder       PurchaseOrder         @relation(fields: [organizationId, purchaseOrderId], references: [organizationId, id], onDelete: Cascade)
@@ -1488,6 +1518,11 @@ model InvoiceDocument {
   subtotalMinor         BigInt?
   taxMinor              BigInt?
   totalMinor            BigInt?
+  poReference           String?
+  discountMinor         BigInt?
+  rebateMinor           BigInt?
+  feesMinor             BigInt?
+  rawText               String?
   possibleDuplicate     Boolean             @default(false)
   uploadedAt            DateTime            @default(now())
   confirmedAt           DateTime?
@@ -1523,6 +1558,13 @@ model InvoiceLine {
   caseQuantity      Int                    @default(1)
   unitCostMinor     BigInt
   lineTotalMinor    BigInt
+  size              String?
+  casesReceived     Int?
+  caseCostMinor     BigInt?
+  discountPerCaseMinor BigInt?
+  rawText           String?
+  /// Explicit, reviewed choice to update the vendor's current cost on confirmation. Never set automatically.
+  updateVendorCost  Boolean                @default(false)
   confidence        Decimal?               @db.Decimal(5, 4)
   matchStatus       InvoiceLineMatchStatus @default(NEEDS_REVIEW)
   newProductData    Json?
@@ -1537,4 +1579,143 @@ model InvoiceLine {
   @@unique([organizationId, id])
   @@unique([organizationId, invoiceDocumentId, lineNumber])
   @@index([organizationId, invoiceDocumentId, matchStatus])
+}
+
+enum TaxProfileKind {
+  /// Uses the store's standard tax rate (Store.taxRateBasisPoints).
+  STANDARD
+  NON_TAXABLE
+  CUSTOM
+}
+
+model TaxProfile {
+  id              String         @id @default(uuid()) @db.Uuid
+  organizationId  String         @db.Uuid
+  name            String
+  kind            TaxProfileKind @default(CUSTOM)
+  /// Required for CUSTOM profiles; STANDARD follows the store rate and NON_TAXABLE is always 0.
+  rateBasisPoints Int?
+  description     String?
+  active          Boolean        @default(true)
+  isDefault       Boolean        @default(false)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  organization    Organization   @relation(fields: [organizationId], references: [id])
+  products        Product[]
+  variants        ProductVariant[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, name])
+}
+
+/// A named price list such as DoorDash, Uber Eats, Price A, or any custom channel. The standard store price stays in Price.
+model PriceBook {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
+  name           String
+  description    String?
+  active         Boolean        @default(true)
+  sortOrder      Int            @default(0)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  specialPrices  SpecialPrice[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, name])
+}
+
+model SpecialPrice {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
+  priceBookId    String         @db.Uuid
+  storeId        String         @db.Uuid
+  variantId      String         @db.Uuid
+  amountMinor    BigInt
+  active         Boolean        @default(true)
+  effectiveFrom  DateTime?
+  effectiveTo    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  priceBook      PriceBook      @relation(fields: [organizationId, priceBookId], references: [organizationId, id])
+  store          Store          @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  variant        ProductVariant @relation(fields: [organizationId, variantId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@index([organizationId, storeId, variantId, priceBookId, active])
+}
+
+enum VendorDealKind {
+  DISCOUNT_PER_CASE
+  DEAL_CASE_PRICE
+  QUANTITY_BREAK
+  REBATE
+  ALLOWANCE
+}
+
+/// Purchasing-side deal. It never changes the vendor's base case cost; cost history keeps the components.
+model VendorDeal {
+  id                 String         @id @default(uuid()) @db.Uuid
+  organizationId     String         @db.Uuid
+  vendorId           String         @db.Uuid
+  variantId          String?        @db.Uuid
+  name               String
+  kind               VendorDealKind
+  amountMinor        BigInt?
+  dealCaseCostMinor  BigInt?
+  minimumCases       Int?
+  startsAt           DateTime?
+  endsAt             DateTime?
+  active             Boolean        @default(true)
+  notes              String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  organization       Organization   @relation(fields: [organizationId], references: [id])
+  vendor             Vendor         @relation(fields: [organizationId, vendorId], references: [organizationId, id])
+  variant            ProductVariant? @relation(fields: [organizationId, variantId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@index([organizationId, vendorId, variantId, active])
+}
+
+enum CostHistorySource {
+  PRODUCT_CREATED
+  PURCHASE_RECEIPT
+  INVOICE_CONFIRMED
+  MANUAL_UPDATE
+}
+
+/// Append-only purchase/cost history. Rows are never rewritten when a vendor's current price changes.
+model ProductCostHistory {
+  id                       String            @id @default(uuid()) @db.Uuid
+  organizationId           String            @db.Uuid
+  storeId                  String?           @db.Uuid
+  variantId                String            @db.Uuid
+  vendorId                 String?           @db.Uuid
+  purchaseOrderId          String?           @db.Uuid
+  invoiceDocumentId        String?           @db.Uuid
+  source                   CostHistorySource
+  occurredAt               DateTime          @default(now())
+  casesOrdered             Int?
+  casesReceived            Int?
+  unitsPerCase             Int
+  baseCaseCostMinor        BigInt
+  discountPerCaseMinor     BigInt            @default(0)
+  rebatePerCaseMinor       BigInt            @default(0)
+  effectiveCaseCostMinor   BigInt
+  effectiveUnitCostMinor   BigInt
+  unitsReceived            Int?
+  unitsDamaged             Int               @default(0)
+  unitsRejected            Int               @default(0)
+  unitsShort               Int               @default(0)
+  createdByEmployeeId      String?           @db.Uuid
+  notes                    String?
+  createdAt                DateTime          @default(now())
+  organization             Organization      @relation(fields: [organizationId], references: [id])
+  variant                  ProductVariant    @relation(fields: [organizationId, variantId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@index([organizationId, variantId, occurredAt(sort: Desc)])
+  @@index([organizationId, vendorId, occurredAt(sort: Desc)])
 }

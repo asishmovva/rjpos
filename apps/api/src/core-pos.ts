@@ -69,6 +69,7 @@ type CheckoutBody = {
   tenderedMinor?: string;
   customerId?: string;
   overrideReason?: string;
+  priceBookId?: string;
 };
 
 function discountFromBody(discount: DiscountBody | undefined): CartDiscount | undefined {
@@ -104,7 +105,7 @@ export class CorePosController {
   async currentStore(@Req() request: TenantRequest) {
     const context = this.context(request, 'catalog:read');
     const store = await this.prisma.store.findFirst({ where: { id: context.storeId, organizationId: context.organizationId },
-      select: { id: true, name: true, addressJson: true, taxRateBasisPoints: true } });
+      select: { id: true, name: true, addressJson: true, taxRateBasisPoints: true, timezone: true } });
     if (!store) throw new ForbiddenException();
     return store;
   }
@@ -166,7 +167,7 @@ export class CorePosController {
         ...(line.discount ? { discount: discountFromBody(line.discount)! } : {}) })),
       ...(body.orderDiscount ? { orderDiscount: discountFromBody(body.orderDiscount)! } : {}),
       ...(body.ageVerified === undefined ? {} : { ageVerified: body.ageVerified }),
-      ...(body.customerId ? { customerId: body.customerId } : {}) };
+      ...(body.customerId ? { customerId: body.customerId } : {}), ...(body.priceBookId ? { priceBookId: body.priceBookId } : {}) };
   }
 
   private requireDiscountAuthorization(context: AuthenticatedTenantContext, body: CheckoutBody): void {
@@ -181,12 +182,12 @@ export class CorePosController {
   }
 
   @Post('checkout/quote')
-  quote(@Req() request: TenantRequest, @Body() body: { lines: Array<{ variantId: string; quantity: number; discount?: DiscountBody }>; orderDiscount?: DiscountBody }) {
+  quote(@Req() request: TenantRequest, @Body() body: { lines: Array<{ variantId: string; quantity: number; discount?: DiscountBody }>; orderDiscount?: DiscountBody; priceBookId?: string }) {
     const context = this.context(request, 'sale:create');
     // Read-only preview: it applies no sale, so manual discounts are calculated here without authorization; checkout enforces it.
     return quoteCheckout(this.prisma, { organizationId: context.organizationId, storeId: context.storeId,
       lines: body.lines.map((line) => ({ variantId: line.variantId, quantity: line.quantity, ...(line.discount ? { discount: discountFromBody(line.discount)! } : {}) })),
-      ...(body.orderDiscount ? { orderDiscount: discountFromBody(body.orderDiscount)! } : {}) });
+      ...(body.orderDiscount ? { orderDiscount: discountFromBody(body.orderDiscount)! } : {}), ...(body.priceBookId ? { priceBookId: body.priceBookId } : {}) });
   }
 
   @Post('checkout/cash')

@@ -18,7 +18,7 @@ function isResult(value: unknown): value is Omit<InvoiceOcrResult, 'provider'> {
     if (!line || typeof line !== 'object') return false;
     const item = line as Record<string, unknown>;
     return typeof item.description === 'string' && Number.isSafeInteger(item.quantity)
-      && typeof item.unitCostMinor === 'string' && typeof item.lineTotalMinor === 'string';
+      && (typeof item.unitCostMinor === 'string' || typeof item.caseCostMinor === 'string') && typeof item.lineTotalMinor === 'string';
   });
 }
 

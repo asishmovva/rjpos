@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   calculateCartTotals,
+  baseUnitsConsumed,
   calculateChangeDue,
   type CartDiscount,
 } from '@rjpos/domain-types';
@@ -12,6 +13,7 @@ import type {
 import { PosError, requirePositiveQuantity } from './pos-errors.js';
 import { findGiftCardByCode, giftCardBalance, loyaltyBalance } from './phase-three.js';
 import { resolveAutomaticPromotions } from './phase-five.js';
+import { loadDefaultTaxProfile, loadSpecialPrices, resolveLineTax, variantTaxInclude } from './sale-pricing.js';
 
 export type CheckoutLine = {
   variantId: string;
@@ -30,6 +32,8 @@ export type CheckoutContext = {
   orderDiscount?: CartDiscount;
   ageVerified?: boolean;
   customerId?: string;
+  /** Optional named price book (channel/special pricing). Falls back to the standard store price per line. */
+  priceBookId?: string;
 };
 
 export type MixedTender = {
@@ -74,7 +78,7 @@ function assertCheckoutInput(input: CheckoutContext): void {
 
 export async function quoteCheckout(
   prisma: PrismaClient,
-  input: { organizationId: string; storeId: string; lines: Array<{ variantId: string; quantity: number; discount?: CartDiscount }>; orderDiscount?: CartDiscount },
+  input: { organizationId: string; storeId: string; lines: Array<{ variantId: string; quantity: number; discount?: CartDiscount }>; orderDiscount?: CartDiscount; priceBookId?: string },
 ) {
   if (!input.lines.length) throw new PosError('CART_EMPTY');
   const ids = new Set<string>();
@@ -88,7 +92,7 @@ export async function quoteCheckout(
       tx.store.findFirst({ where: { id: input.storeId, organizationId: input.organizationId } }),
       tx.productVariant.findMany({
         where: { organizationId: input.organizationId, id: { in: [...ids] } },
-        include: { product: true, prices: {
+        include: { ...variantTaxInclude, prices: {
           where: { effectiveFrom: { lte: new Date() }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: new Date() } }],
             AND: [{ OR: [{ storeId: input.storeId }, { storeId: null }] }] },
           orderBy: { effectiveFrom: 'desc' },
@@ -98,13 +102,18 @@ export async function quoteCheckout(
     if (!store) throw new PosError('STORE_NOT_FOUND', 404);
     if (variants.length !== ids.size) throw new PosError('PRODUCT_VARIANT_NOT_FOUND', 404);
     const byId = new Map(variants.map((variant) => [variant.id, variant]));
+    const specials = input.priceBookId ? await loadSpecialPrices(tx, { organizationId: input.organizationId, storeId: input.storeId, priceBookId: input.priceBookId, variantIds: [...ids], now: new Date() }) : null;
+    if (input.priceBookId && !specials) throw new PosError('PRICE_BOOK_NOT_FOUND', 404);
+    const defaultTax = await loadDefaultTaxProfile(tx, input.organizationId);
     const authoritative = input.lines.map((line) => {
       const variant = byId.get(line.variantId);
       if (!variant) throw new PosError('PRODUCT_VARIANT_NOT_FOUND', 404);
       if (!variant.active || !variant.product.active) throw new PosError('PRODUCT_INACTIVE', 409);
-      const price = variant.prices.find((candidate) => candidate.storeId === input.storeId)
+      const standard = variant.prices.find((candidate) => candidate.storeId === input.storeId)
         ?? variant.prices.find((candidate) => candidate.storeId === null);
-      if (!price) throw new PosError('PRICE_NOT_FOUND', 409);
+      const special = specials?.prices.get(variant.id);
+      if (!standard && special === undefined) throw new PosError('PRICE_NOT_FOUND', 409);
+      const price = { amountMinor: special ?? standard!.amountMinor, currency: standard?.currency ?? 'USD' };
       return { line, variant, price };
     });
     const now = new Date();
@@ -112,13 +121,14 @@ export async function quoteCheckout(
       lines: authoritative.map(({ line, variant, price }) => ({ variant, quantity: line.quantity, unitPriceMinor: price.amountMinor })) });
     const totals = calculateCartTotals({ taxRateBasisPoints: store.taxRateBasisPoints, lines: authoritative.map(({ line, variant, price }) => ({
       variantId: variant.id, quantity: line.quantity, unitPriceMinor: price.amountMinor,
-      taxable: variant.product.taxCategory !== 'EXEMPT',
+      taxable: true,
+      taxRateBasisPoints: resolveLineTax(variant, defaultTax, store.taxRateBasisPoints).rateBasisPoints,
       ...(line.discount ? { discount: line.discount } : promotions.has(variant.id) ? { discount: promotions.get(variant.id)!.discount } : {}),
     })), ...(input.orderDiscount ? { orderDiscount: input.orderDiscount } : {}) });
     return {
       subtotalMinor: totals.subtotalMinor.toString(), discountMinor: totals.discountMinor.toString(),
       taxMinor: totals.taxMinor.toString(), totalMinor: totals.totalMinor.toString(),
-      lines: totals.lines.map((line) => ({ variantId: line.variantId, unitPriceMinor: line.unitPriceMinor.toString(),
+      lines: totals.lines.map((line) => ({ variantId: line.variantId, unitPriceMinor: line.unitPriceMinor.toString(), taxRateBasisPoints: line.taxRateBasisPoints,
         quantity: line.quantity, subtotalMinor: line.subtotalMinor.toString(), discountMinor: line.discountMinor.toString(),
         taxMinor: line.taxMinor.toString(), totalMinor: line.totalMinor.toString(),
         promotionName: promotions.get(line.variantId)?.promotionName ?? null })),
@@ -222,7 +232,7 @@ async function prepareOrder(tx: Tx, input: CheckoutContext) {
   const variants = await tx.productVariant.findMany({
     where: { organizationId: input.organizationId, id: { in: requestedIds } },
     include: {
-      product: true,
+      ...variantTaxInclude,
       barcodes: { take: 1 },
       prices: {
         where: { effectiveFrom: { lte: now }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
@@ -233,14 +243,19 @@ async function prepareOrder(tx: Tx, input: CheckoutContext) {
   });
   if (variants.length !== requestedIds.length) throw new PosError('PRODUCT_VARIANT_NOT_FOUND', 404);
   const byId = new Map(variants.map((variant) => [variant.id, variant]));
+  const specials = input.priceBookId ? await loadSpecialPrices(tx, { organizationId: input.organizationId, storeId: input.storeId, priceBookId: input.priceBookId, variantIds: requestedIds, now }) : null;
+  if (input.priceBookId && !specials) throw new PosError('PRICE_BOOK_NOT_FOUND', 404);
+  const defaultTax = await loadDefaultTaxProfile(tx, input.organizationId);
   const authoritative = input.lines.map((line) => {
     const variant = byId.get(line.variantId);
     if (!variant) throw new PosError('PRODUCT_VARIANT_NOT_FOUND', 404);
     if (!variant.active || !variant.product.active) throw new PosError('PRODUCT_INACTIVE', 409);
-    const price = variant.prices.find((candidate) => candidate.storeId === input.storeId)
+    const standard = variant.prices.find((candidate) => candidate.storeId === input.storeId)
       ?? variant.prices.find((candidate) => candidate.storeId === null);
-    if (!price) throw new PosError('PRICE_NOT_FOUND', 409);
-    return { line, variant, price };
+    const special = specials?.prices.get(variant.id);
+    if (!standard && special === undefined) throw new PosError('PRICE_NOT_FOUND', 409);
+    const price = { amountMinor: special ?? standard!.amountMinor, currency: standard?.currency ?? 'USD' };
+    return { line, variant, price, specialApplied: special !== undefined };
   });
   const requiresAgeVerification = authoritative.some(({ variant }) => variant.product.ageRestricted);
   if (requiresAgeVerification && !input.ageVerified) {
@@ -257,7 +272,8 @@ async function prepareOrder(tx: Tx, input: CheckoutContext) {
       variantId: variant.id,
       quantity: line.quantity,
       unitPriceMinor: price.amountMinor,
-      taxable: variant.product.taxCategory !== 'EXEMPT',
+      taxable: true,
+      taxRateBasisPoints: resolveLineTax(variant, defaultTax, store.taxRateBasisPoints).rateBasisPoints,
       ...(line.discount ? { discount: line.discount } : promotions.has(variant.id) ? { discount: promotions.get(variant.id)!.discount } : {}),
     })),
     taxRateBasisPoints: store.taxRateBasisPoints,
@@ -297,6 +313,9 @@ async function prepareOrder(tx: Tx, input: CheckoutContext) {
         totalMinor: line.totalMinor,
         currency: source.price.currency,
         taxCategorySnapshot: source.variant.product.taxCategory,
+        taxRateBasisPointsSnapshot: line.taxRateBasisPoints,
+        ...(resolveLineTax(source.variant, defaultTax, store.taxRateBasisPoints).profileName ? { taxProfileNameSnapshot: resolveLineTax(source.variant, defaultTax, store.taxRateBasisPoints).profileName! } : {}),
+        ...(source.specialApplied && specials ? { priceBookNameSnapshot: specials.priceBookName } : {}),
         ...(promotions.has(line.variantId) && !source.line.discount ? {
           promotionId: promotions.get(line.variantId)!.promotionId,
           promotionNameSnapshot: promotions.get(line.variantId)!.promotionName,
@@ -304,10 +323,17 @@ async function prepareOrder(tx: Tx, input: CheckoutContext) {
       };
     }) });
 
-  const tracked = authoritative.filter(({ variant }) => variant.product.inventoryTracked);
+  // Stock is held per base variant: a pack sale (e.g. a 6-pack) consumes unitsPerPack base units.
+  const consumption = new Map<string, number>();
+  for (const { line, variant } of authoritative) {
+    if (!variant.product.inventoryTracked) continue;
+    const inventoryVariantId = variant.baseVariantId ?? variant.id;
+    consumption.set(inventoryVariantId, (consumption.get(inventoryVariantId) ?? 0) + baseUnitsConsumed(line.quantity, variant.baseVariantId ? variant.unitsPerPack : 1));
+  }
   let reservationId: string | undefined;
-  if (tracked.length > 0) {
-    const ids = tracked.map(({ variant }) => Prisma.sql`${variant.id}::uuid`);
+  if (consumption.size > 0) {
+    const inventoryVariantIds = [...consumption.keys()];
+    const ids = inventoryVariantIds.map((id) => Prisma.sql`${id}::uuid`);
     await tx.$queryRaw`
       SELECT id FROM "InventoryLevel"
       WHERE "organizationId" = ${input.organizationId}::uuid
@@ -316,26 +342,25 @@ async function prepareOrder(tx: Tx, input: CheckoutContext) {
       ORDER BY id FOR UPDATE
     `;
     const levels = await tx.inventoryLevel.findMany({ where: {
-      organizationId: input.organizationId, storeId: input.storeId,
-      variantId: { in: tracked.map(({ variant }) => variant.id) },
+      organizationId: input.organizationId, storeId: input.storeId, variantId: { in: inventoryVariantIds },
     }});
     const levelByVariant = new Map(levels.map((level) => [level.variantId, level]));
-    for (const { line, variant } of tracked) {
-      const level = levelByVariant.get(variant.id);
-      if (!level || level.onHand - level.reserved < line.quantity) throw new PosError('INSUFFICIENT_INVENTORY', 409);
+    for (const [inventoryVariantId, quantity] of consumption) {
+      const level = levelByVariant.get(inventoryVariantId);
+      if (!level || level.onHand - level.reserved < quantity) throw new PosError('INSUFFICIENT_INVENTORY', 409);
     }
     const reservation = await tx.inventoryReservation.create({ data: {
       organizationId: input.organizationId, storeId: input.storeId, orderId: order.id,
     }});
-    await tx.inventoryReservationLine.createMany({ data: tracked.map(({ line, variant }) => ({
+    await tx.inventoryReservationLine.createMany({ data: [...consumption].map(([inventoryVariantId, quantity]) => ({
       organizationId: input.organizationId, reservationId: reservation.id, storeId: input.storeId,
-      variantId: variant.id, quantity: line.quantity,
+      variantId: inventoryVariantId, quantity,
     })) });
     reservationId = reservation.id;
-    for (const { line, variant } of tracked) {
+    for (const [inventoryVariantId, quantity] of consumption) {
       await tx.inventoryLevel.update({ where: { organizationId_storeId_variantId: {
-        organizationId: input.organizationId, storeId: input.storeId, variantId: variant.id,
-      }}, data: { reserved: { increment: line.quantity } } });
+        organizationId: input.organizationId, storeId: input.storeId, variantId: inventoryVariantId,
+      }}, data: { reserved: { increment: quantity } } });
     }
   }
   return { order, totals, reservationId, requiresAgeVerification, promotions };

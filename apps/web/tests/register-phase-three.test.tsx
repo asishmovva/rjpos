@@ -49,9 +49,10 @@ describe('Phase 3 register workflow', () => {
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Open register' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await user.type(screen.getByLabelText('Scan UPC, enter SKU, or search products'), 'SKU1{enter}');
+    await user.click(screen.getByRole('button', { name: 'Gift Card' }));
     await user.type(screen.getByLabelText('Gift-card code'), 'RJ-TEST');
-    await user.clear(screen.getByLabelText('Gift-card amount'));
-    await user.type(screen.getByLabelText('Gift-card amount'), '1200');
+    await user.type(screen.getByLabelText('Gift-card amount'), '12.00');
+    await user.click(screen.getByRole('button', { name: 'Apply gift card' }));
     await user.click(screen.getByRole('button', { name: 'Split with cash' }));
 
     await waitFor(() => expect(mixedBody).toBeDefined());

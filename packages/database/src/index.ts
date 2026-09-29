@@ -39,6 +39,7 @@ export {
   confirmInvoiceDocument,
   createInvoiceDocument,
   getInvoiceDocument,
+  getInvoiceReview,
   getInvoiceDocumentInput,
   listInvoiceDocuments,
   markInvoiceOcrFailed,
@@ -177,3 +178,9 @@ export function parseMoneyApi(amountMinor: string): bigint {
 export { seedDemoStoreCatalog, type DemoStoreSeedSummary } from './demo-store-catalog.js';
 export { hashPin, verifyPin } from './pin.js';
 export { getShiftReport, type ShiftReport } from './shift-report.js';
+export { assignTaxProfile, createTaxProfile, deleteTaxProfile, ensureSystemTaxProfiles, listTaxProfiles, updateTaxProfile } from './tax-profiles.js';
+export { createPriceBook, listPriceBooks, listSpecialPrices, saveSpecialPrice, updatePriceBook } from './price-books.js';
+export { activeVendorDeals, createVendorDeal, listVendorDeals, updateVendorDeal } from './vendor-deals.js';
+export { createPurchasedProduct, getProductDetail, lookupUpcForCreation, type PurchasedProductInput, type SellingUnitInput } from './product-costing.js';
+export { recordCostHistory } from './cost-history.js';
+export { loadDefaultTaxProfile, loadSpecialPrices, resolveLineTax } from './sale-pricing.js';
