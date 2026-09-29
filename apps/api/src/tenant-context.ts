@@ -7,6 +7,8 @@ export type AuthenticatedTenantContext = {
   storeId?: string;
   registerId?: string;
   permissions: ReadonlySet<string>;
+  /** Set when a manager/owner PIN elevation authorized this request. */
+  approvedByEmployeeId?: string;
 };
 
 export type TenantRequest = Request & { tenantContext?: AuthenticatedTenantContext };
@@ -14,7 +16,7 @@ export type TenantRequest = Request & { tenantContext?: AuthenticatedTenantConte
 export const rolePermissions: Record<string, readonly string[]> = {
   OWNER: ['quickkey:manage', 'drawer:open', 'price:override', 'report:read', 'report:export', 'catalog:read', 'catalog:manage', 'price:manage', 'inventory:read', 'inventory:adjust', 'inventory:transfer', 'inventory:count', 'replenishment:read', 'promotion:manage', 'employee:manage', 'store:manage', 'register:manage', 'register:open', 'register:close', 'sale:create', 'discount:apply', 'order:read', 'order:void', 'order:refund', 'audit:read', 'dashboard:read', 'settings:write', 'workforce:clock', 'workforce:manage', 'customer:read', 'customer:manage', 'loyalty:manage', 'giftcard:manage', 'giftcard:redeem', 'mastercatalog:manage', 'vendor:read', 'vendor:manage', 'purchase:read', 'purchase:manage'],
   MANAGER: ['quickkey:manage', 'drawer:open', 'price:override', 'report:read', 'report:export', 'catalog:read', 'catalog:manage', 'price:manage', 'inventory:read', 'inventory:adjust', 'inventory:transfer', 'inventory:count', 'replenishment:read', 'promotion:manage', 'employee:manage', 'register:manage', 'register:open', 'register:close', 'sale:create', 'discount:apply', 'order:read', 'order:void', 'order:refund', 'audit:read', 'dashboard:read', 'workforce:clock', 'workforce:manage', 'customer:read', 'customer:manage', 'loyalty:manage', 'giftcard:manage', 'giftcard:redeem', 'vendor:read', 'purchase:read', 'purchase:manage'],
-  CASHIER: ['catalog:read', 'inventory:read', 'register:open', 'sale:create', 'order:read', 'workforce:clock', 'customer:read', 'customer:manage', 'giftcard:redeem'],
+  CASHIER: ['catalog:read', 'inventory:read', 'register:open', 'register:close', 'sale:create', 'order:read', 'workforce:clock', 'customer:read', 'customer:manage', 'giftcard:redeem'],
 };
 
 export function contextFromDevelopmentHeaders(request: Request): AuthenticatedTenantContext {

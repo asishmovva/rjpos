@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Register from '../app/page.js';
+import { signInAs } from './session.js';
 
 const response = (body: unknown, ok = true): Response =>
   ({ ok, status: ok ? 200 : 400, json: async () => body }) as Response;
 
 describe('Phase 3 register workflow', () => {
-  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  beforeEach(() => signInAs());
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.sessionStorage.clear(); });
 
   it('initializes clock status from the backend and updates button state after clock out', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -43,7 +45,9 @@ describe('Phase 3 register workflow', () => {
 
     const user = userEvent.setup();
     render(<Register />);
-    await user.click(await screen.findByRole('button', { name: 'Open register · $100.00' }));
+    await user.click(await screen.findByRole('button', { name: 'Open register' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Open register' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await user.type(screen.getByLabelText('Scan UPC, enter SKU, or search products'), 'SKU1{enter}');
     await user.type(screen.getByLabelText('Gift-card code'), 'RJ-TEST');
     await user.clear(screen.getByLabelText('Gift-card amount'));

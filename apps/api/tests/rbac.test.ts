@@ -23,7 +23,7 @@ describe('Phase 1 API role permissions', () => {
     const permissions = contextFromDevelopmentHeaders(request('CASHIER')).permissions;
     expect(permissions.has('sale:create')).toBe(true);
     expect(permissions.has('inventory:adjust')).toBe(false);
-    expect(permissions.has('register:close')).toBe(false);
+    expect(permissions.has('register:close')).toBe(true);
     expect(permissions.has('order:void')).toBe(false);
     expect(permissions.has('order:refund')).toBe(false);
     expect(permissions.has('discount:apply')).toBe(false);

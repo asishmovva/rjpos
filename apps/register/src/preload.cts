@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('rjpos', {
   hardwareStatus: () => ipcRenderer.invoke('hardware:status'),
-  printReceipt: (orderId: string) => ipcRenderer.invoke('hardware:print-receipt', orderId),
+  printReceipt: (orderId: string, sessionToken?: string) => ipcRenderer.invoke('hardware:print-receipt', orderId, sessionToken),
   testPrinter: () => ipcRenderer.invoke('hardware:test-printer'),
-  openDrawer: (request: { reason?: string; orderId?: string }) => ipcRenderer.invoke('hardware:open-drawer', request),
+  openDrawer: (request: { reason?: string; orderId?: string; elevationToken?: string; sessionToken?: string }) => ipcRenderer.invoke('hardware:open-drawer', request),
 });

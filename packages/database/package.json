@@ -19,6 +19,7 @@
     "test:prepare": "tsx scripts/prepare-test-database.ts",
     "db:deploy": "tsx scripts/deploy-development-database.ts",
     "db:seed": "tsx prisma/seed.ts",
+    "db:seed-demo-store": "tsx scripts/seed-demo-store-catalog.ts",
     "prisma:generate": "prisma generate"
   },
   "dependencies": {

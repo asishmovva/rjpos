@@ -38,7 +38,7 @@ export function normalizeUpc(value: string): string {
   return upc;
 }
 
-function normalizeMainCatalogUpc(value: string): string {
+export function normalizeMainCatalogUpc(value: string): string {
   const upc = value.trim().replace(/[\s-]/g, '');
   if (/^\d{1,7}$/.test(upc) || /^\d{9,11}$/.test(upc)) return normalizeUpc(upc.padStart(12, '0'));
   return normalizeUpc(upc);
@@ -121,9 +121,9 @@ export async function addMasterProductToStore(prisma: PrismaClient, actor: Purch
   });
 }
 
-type CsvRecord = { line: number; fields: string[] };
+export type CsvRecord = { line: number; fields: string[] };
 
-function parseCsv(csv: string): CsvRecord[] {
+export function parseCsv(csv: string): CsvRecord[] {
   const rows: CsvRecord[] = [];
   let fields: string[] = [];
   let field = '';

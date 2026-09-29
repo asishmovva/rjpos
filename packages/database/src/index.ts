@@ -13,6 +13,7 @@ export {
 export {
   adjustInventory,
   getInventorySnapshot,
+  searchInventory,
   postOpeningBalance,
 } from './inventory.js';
 export {
@@ -72,6 +73,7 @@ export {
   schedulePrice,
   updateCategory,
   updateEmployee,
+  setEmployeePin,
   updateProduct,
   updateRegister,
   updateStore,
@@ -142,6 +144,7 @@ export {
   listQuickKeysAdmin,
   resumeHeldTransaction,
   saveQuickKey,
+  reorderQuickKeys,
   type RegisterActor,
 } from './phase-seven.js';
 export {
@@ -171,3 +174,6 @@ export function parseMoneyApi(amountMinor: string): bigint {
     throw new Error('Invalid monetary minor unit');
   return BigInt(amountMinor);
 }
+export { seedDemoStoreCatalog, type DemoStoreSeedSummary } from './demo-store-catalog.js';
+export { hashPin, verifyPin } from './pin.js';
+export { getShiftReport, type ShiftReport } from './shift-report.js';

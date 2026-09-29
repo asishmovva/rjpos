@@ -33,6 +33,7 @@ import { PhaseFiveController } from './phase-five.js';
 import { ReportingController } from './reporting.js';
 import { PhaseSevenController } from './phase-seven.js';
 import { InvoiceController, INVOICE_OCR_PROVIDER } from './invoices.js';
+import { ElevationController } from './elevation.js';
 import { LocalFixtureInvoiceOcrProvider, UnavailableInvoiceOcrProvider } from './invoice-ocr.js';
 
 const environment = loadEnvironment();
@@ -57,7 +58,7 @@ function productionHeaders(request: Request, response: Response, next: NextFunct
 }
 
 @Module({
-  controllers: [HealthController, CorePosController, BackOfficeController, PhaseThreeController, PurchasingController, PhaseFiveController, ReportingController, PhaseSevenController, InvoiceController],
+  controllers: [HealthController, CorePosController, BackOfficeController, PhaseThreeController, PurchasingController, PhaseFiveController, ReportingController, PhaseSevenController, InvoiceController, ElevationController],
   providers: [
     HealthService,
     TenantContextService,
@@ -89,7 +90,7 @@ const allowedOrigins = Array.from(new Set([
   'rjpos://app',
   ...(process.env.RJPOS_ALLOWED_ORIGINS ?? (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3000,http://127.0.0.1:3000')).split(',').map((value) => value.trim()).filter(Boolean),
 ]));
-app.enableCors({ origin: allowedOrigins, methods: ['GET', 'POST', 'PATCH', 'OPTIONS'], allowedHeaders: ['content-type', 'x-request-id', 'x-rjpos-role', 'x-rjpos-organization-id', 'x-rjpos-store-id', 'x-rjpos-register-id', 'x-rjpos-employee-id'], credentials: false, maxAge: 600 });
+app.enableCors({ origin: allowedOrigins, methods: ['GET', 'POST', 'PATCH', 'OPTIONS'], allowedHeaders: ['content-type', 'x-request-id', 'x-rjpos-role', 'x-rjpos-organization-id', 'x-rjpos-store-id', 'x-rjpos-register-id', 'x-rjpos-employee-id', 'x-rjpos-elevation', 'x-rjpos-session'], credentials: false, maxAge: 600 });
 app.useGlobalFilters(new ErrorEnvelopeFilter());
 app.useGlobalInterceptors(new BigIntJsonInterceptor());
 await app.listen(process.env.PORT ?? 3001);

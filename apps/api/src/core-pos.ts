@@ -29,12 +29,14 @@ import {
   quoteCheckout,
   recordAudit,
   refundOrder,
+  searchInventory,
   searchOrders,
   voidOrder,
   type CheckoutContext,
 } from '@rjpos/database';
 import type { CartDiscount } from '@rjpos/domain-types';
 import { SimulatedTerminalProvider, type TerminalPaymentProvider } from '@rjpos/payment-contracts';
+import { applyElevation, contextFromSession } from './elevation-token.js';
 import {
   contextFromDevelopmentHeaders,
   TenantContextService,
@@ -48,7 +50,11 @@ export const TERMINAL_PROVIDER = Symbol('TERMINAL_PROVIDER');
 @Injectable()
 export class DevelopmentAuthMiddleware implements NestMiddleware {
   use(request: TenantRequest, _response: Response, next: NextFunction): void {
-    request.tenantContext = contextFromDevelopmentHeaders(request);
+    // A PIN-login session identifies the real employee; without one, the development header provider is used.
+    const session = request.header('x-rjpos-session');
+    const context = session ? contextFromSession(session) : contextFromDevelopmentHeaders(request);
+    const elevation = request.header('x-rjpos-elevation');
+    request.tenantContext = elevation ? applyElevation(context, elevation) : context;
     next();
   }
 }
@@ -104,9 +110,14 @@ export class CorePosController {
   }
 
   @Get('inventory')
-  inventory(@Req() request: TenantRequest) {
+  inventory(@Req() request: TenantRequest, @Query() query: Record<string, string>) {
     const context = this.context(request, 'inventory:read');
-    return getInventorySnapshot(this.prisma, context.organizationId, context.storeId);
+    // Without paging parameters the legacy full snapshot is returned; the register always pages.
+    if (query.page === undefined && query.pageSize === undefined) return getInventorySnapshot(this.prisma, context.organizationId, context.storeId);
+    const status = query.status === 'in_stock' || query.status === 'low' || query.status === 'zero' ? query.status : undefined;
+    return searchInventory(this.prisma, { organizationId: context.organizationId, storeId: context.storeId, ...(query.search ? { search: query.search } : {}),
+      ...(query.categoryId ? { categoryId: query.categoryId } : {}), ...(query.size ? { size: query.size } : {}), ...(status ? { status } : {}),
+      ...(query.page ? { page: Number(query.page) } : {}), ...(query.pageSize ? { pageSize: Number(query.pageSize) } : {}) });
   }
 
   @Post('inventory/opening-balance')
@@ -124,10 +135,11 @@ export class CorePosController {
   }
 
   @Post('register-sessions/open')
-  open(@Req() request: TenantRequest, @Body() body: { openingCashMinor: string }) {
+  open(@Req() request: TenantRequest, @Body() body: { openingCashMinor: string; note?: string }) {
     const context = this.context(request, 'register:open');
     return openRegisterSession(this.prisma, { organizationId: context.organizationId, storeId: context.storeId,
-      registerId: context.registerId, employeeId: context.userId, openingCashMinor: parseMoneyApi(body.openingCashMinor) });
+      registerId: context.registerId, employeeId: context.userId, openingCashMinor: parseMoneyApi(body.openingCashMinor),
+      ...(typeof body.note === 'string' && body.note.trim() ? { note: body.note } : {}) });
   }
 
   @Get('register-sessions/current')
@@ -159,18 +171,22 @@ export class CorePosController {
 
   private requireDiscountAuthorization(context: AuthenticatedTenantContext, body: CheckoutBody): void {
     if (!body.lines.some((line) => line.discount) && !body.orderDiscount) return;
-    if (!context.permissions.has('price:override') || !body.overrideReason?.trim()) throw new ForbiddenException();
+    // Discounts and custom prices need discount:apply (Manager/Owner, or a cashier with a PIN elevation). A reason is optional.
+    if (!context.permissions.has('discount:apply') && !context.permissions.has('price:override')) throw new ForbiddenException();
   }
 
   private async auditOverride(context: AuthenticatedTenantContext & { storeId: string; registerId: string }, body: CheckoutBody, result: { orderId: string }): Promise<void> {
     if (!body.lines.some((line) => line.discount) && !body.orderDiscount) return;
-    await recordAudit(this.prisma, { organizationId: context.organizationId, action: 'PRICE_OVERRIDE_APPLIED', entityType: 'Order', entityId: result.orderId, afterJson: { employeeId: context.userId, storeId: context.storeId, registerId: context.registerId, reason: body.overrideReason?.trim(), overriddenVariantIds: body.lines.filter((line) => line.discount).map((line) => line.variantId), orderDiscount: Boolean(body.orderDiscount) } });
+    await recordAudit(this.prisma, { organizationId: context.organizationId, action: 'PRICE_OVERRIDE_APPLIED', entityType: 'Order', entityId: result.orderId, afterJson: { employeeId: context.userId, approvedByEmployeeId: context.approvedByEmployeeId ?? null, storeId: context.storeId, registerId: context.registerId, reason: body.overrideReason?.trim() || null, lineDiscounts: body.lines.filter((line) => line.discount).map((line) => ({ variantId: line.variantId, discount: line.discount })), orderDiscount: body.orderDiscount ?? null } });
   }
 
   @Post('checkout/quote')
-  quote(@Req() request: TenantRequest, @Body() body: { lines: Array<{ variantId: string; quantity: number }> }) {
+  quote(@Req() request: TenantRequest, @Body() body: { lines: Array<{ variantId: string; quantity: number; discount?: DiscountBody }>; orderDiscount?: DiscountBody }) {
     const context = this.context(request, 'sale:create');
-    return quoteCheckout(this.prisma, { organizationId: context.organizationId, storeId: context.storeId, lines: body.lines });
+    // Read-only preview: it applies no sale, so manual discounts are calculated here without authorization; checkout enforces it.
+    return quoteCheckout(this.prisma, { organizationId: context.organizationId, storeId: context.storeId,
+      lines: body.lines.map((line) => ({ variantId: line.variantId, quantity: line.quantity, ...(line.discount ? { discount: discountFromBody(line.discount)! } : {}) })),
+      ...(body.orderDiscount ? { orderDiscount: discountFromBody(body.orderDiscount)! } : {}) });
   }
 
   @Post('checkout/cash')

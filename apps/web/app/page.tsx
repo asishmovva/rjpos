@@ -2,8 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './register.css';
-
-const API = process.env.NEXT_PUBLIC_RJPOS_API_URL ?? 'http://127.0.0.1:3001/api/v1';
+import { api, adjustmentToDiscount, friendlyError, getApiSessionToken, loadStoredSession, money, parseDollarsToMinor, setApiSession, storeSession, type DiscountBody, type PriceAdjustment, type RegisterSession } from './register-api';
+import { CartLine } from './cart-line';
+import { InventoryView } from './inventory-view';
+import { LockScreen } from './register-lock';
+import { CustomerCreateForm, DiscountDialog, ElevationDialog, isElevationActive, OpenRegisterDialog, ShiftReportView, type Elevation, type ShiftReport } from './register-dialogs';
 type CatalogItem = {
   variantId: string;
   productName: string;
@@ -75,27 +78,7 @@ type LoyaltyProgram = {
   redeemMinorPerPoint: string;
 } | null;
 
-function money(value: bigint | string): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-  }).format(Number(BigInt(value)) / 100);
-}
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  try {
-    const response = await fetch(`${API}${path}`, { ...init, headers: { 'content-type': 'application/json', ...init?.headers }, signal: init?.signal ?? AbortSignal.timeout(10_000) });
-    const body = (typeof response.text === 'function'
-      ? await response.text().then((text) => text ? JSON.parse(text) : null)
-      : await response.json()) as T & { error?: { code: string } } | null;
-    if (!response.ok) throw new Error(body?.error?.code ?? `HTTP_${response.status}`);
-    return body as T;
-  } catch (error) {
-    if (error instanceof TypeError || (error instanceof DOMException && error.name === 'TimeoutError')) throw new Error('Register cannot reach the server. No sale was recorded.');
-    throw error;
-  }
-}
-
-export default function Register(): React.ReactNode {
+function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLock: () => void }): React.ReactNode {
   const [sessionId, setSessionId] = useState('');
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<CatalogItem[]>([]);
@@ -113,14 +96,8 @@ export default function Register(): React.ReactNode {
       totalMinor: string;
     }>
   >([]);
-  const [inventory, setInventory] = useState<
-    Array<{
-      id: string;
-      onHand: number;
-      reserved: number;
-      variant: { name: string; sku: string; product: { name: string } };
-    }>
-  >([]);
+  const [storeName, setStoreName] = useState('Downtown');
+  const endedShift = useRef(false);
   const [taxRate, setTaxRate] = useState(0);
   const [customerSearch, setCustomerSearch] = useState('');
   const [customerResults, setCustomerResults] = useState<Customer[]>([]);
@@ -135,13 +112,21 @@ export default function Register(): React.ReactNode {
   const [quickKeys, setQuickKeys] = useState<QuickKey[]>([]);
   const [quickGroup, setQuickGroup] = useState('All');
   const [heldTransactions, setHeldTransactions] = useState<HeldTransaction[]>([]);
-  const [utility, setUtility] = useState<'none' | 'resume' | 'discount' | 'drawer' | 'hardware' | 'return'>('none');
+  const [utility, setUtility] = useState<'none' | 'resume' | 'discount' | 'drawer' | 'hardware' | 'return' | 'approve' | 'open' | 'customer' | 'close' | 'report'>('none');
+  const [elevation, setElevation] = useState<Elevation | null>(null);
+  const [approveReason, setApproveReason] = useState('');
+  const pendingAction = useRef<(() => void) | null>(null);
+  const elevationRef = useRef<Elevation | null>(null);
+  const [cartAdjustment, setCartAdjustment] = useState<PriceAdjustment | null>(null);
+  const [lineAdjustments, setLineAdjustments] = useState<Record<string, PriceAdjustment>>({});
+  const [closeCash, setCloseCash] = useState('');
+  const [closeWithClockOut, setCloseWithClockOut] = useState(false);
+  const [shiftReport, setShiftReport] = useState<ShiftReport | null>(null);
   const [returnOrder, setReturnOrder] = useState<Receipt | null>(null);
   const [returnQuantities, setReturnQuantities] = useState<Record<string, number>>({});
   const [returnReason, setReturnReason] = useState('');
   const [cashTendered, setCashTendered] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
-  const [orderDiscount, setOrderDiscount] = useState('');
   const [online, setOnline] = useState(true);
   const scanInput = useRef<HTMLInputElement>(null);
   const scannerBuffer = useRef('');
@@ -152,23 +137,55 @@ export default function Register(): React.ReactNode {
   const discount = quote ? BigInt(quote.discountMinor) : 0n;
   const projectedTax = quote ? BigInt(quote.taxMinor) : (subtotal * BigInt(taxRate) + 5000n) / 10000n;
   const total = quote ? BigInt(quote.totalMinor) : subtotal + projectedTax;
+  // Manual discounts/custom prices are described client-side but always priced by the server (quote and checkout).
+  const adjustments = useMemo(() => {
+    const lines: Array<{ variantId: string; quantity: number; discount?: DiscountBody }> = cart.map((line) => {
+      const adjustment = lineAdjustments[line.variantId];
+      return { variantId: line.variantId, quantity: line.quantity, ...(adjustment && line.priceMinor !== null ? { discount: adjustmentToDiscount(adjustment, BigInt(line.priceMinor), line.quantity) } : {}) };
+    });
+    const orderDiscount = cartAdjustment ? adjustmentToDiscount(cartAdjustment, 0n, 1) : undefined;
+    return { lines, orderDiscount, active: Boolean(orderDiscount) || lines.some((line) => line.discount) };
+  }, [cart, lineAdjustments, cartAdjustment]);
+  function currentElevation(): Elevation | null { return isElevationActive(elevationRef.current) ? elevationRef.current : null; }
+  function sessionHint(): { sessionToken?: string } { const token = getApiSessionToken(); return token ? { sessionToken: token } : {}; }
+  function withApproval(): { elevationToken?: string } { const approval = currentElevation(); return approval ? { elevationToken: approval.token } : {}; }
+  function grantElevation(granted: Elevation | null): void { elevationRef.current = granted; setElevation(granted); }
+  function requireElevation(reason: string, action: () => void): void {
+    if (session.role !== 'CASHIER' || currentElevation()) { action(); return; }
+    pendingAction.current = action; setApproveReason(reason); setUtility('approve');
+  }
+  function closeUtility(): void {
+    pendingAction.current = null;
+    // Closing the end-of-shift report finishes the shift: the employee is signed out.
+    if (utility === 'report' && endedShift.current) { onLock(); return; }
+    setUtility('none');
+  }
+  function removeLine(variantId: string): void {
+    setCart((rows) => rows.filter((row) => row.variantId !== variantId));
+    setLineAdjustments((current) => { const { [variantId]: _removed, ...rest } = current; return rest; });
+  }
+  function setQuantity(variantId: string, quantity: number): void {
+    if (quantity <= 0) { removeLine(variantId); return; }
+    setCart((rows) => rows.map((row) => (row.variantId === variantId ? { ...row, quantity } : row)));
+  }
+  function clearAdjustments(): void { setCartAdjustment(null); setLineAdjustments({}); }
 
   useEffect(() => {
     void (async () => {
-      const [shiftResult, sessionResult, storeResult, keysResult] = await Promise.allSettled([api<{ clockedOutAt: string | null } | null>('/workforce/current'), api<{ id: string; status: 'OPEN' | 'CLOSING' } | null>('/register-sessions/current'), api<{ taxRateBasisPoints: number }>('/store/current'), api<QuickKey[]>('/quick-keys')]);
+      const [shiftResult, sessionResult, storeResult, keysResult] = await Promise.allSettled([api<{ clockedOutAt: string | null } | null>('/workforce/current'), api<{ id: string; status: 'OPEN' | 'CLOSING' } | null>('/register-sessions/current'), api<{ taxRateBasisPoints: number; name?: string }>('/store/current'), api<QuickKey[]>('/quick-keys')]);
       if (shiftResult.status === 'fulfilled') setClockedIn(Boolean(shiftResult.value && shiftResult.value.clockedOutAt === null));
       if (sessionResult.status === 'fulfilled' && sessionResult.value?.status === 'OPEN') {
         setSessionId(sessionResult.value.id);
         setMessage('Existing register session restored. Ready to sell.');
       }
-      if (storeResult.status === 'fulfilled') setTaxRate(storeResult.value.taxRateBasisPoints);
+      if (storeResult.status === 'fulfilled') { setTaxRate(storeResult.value.taxRateBasisPoints); if (storeResult.value.name) setStoreName(storeResult.value.name); }
       if (keysResult.status === 'fulfilled' && Array.isArray(keysResult.value)) setQuickKeys(keysResult.value);
       setOnline([shiftResult, sessionResult, storeResult].some((result) => result.status === 'fulfilled'));
     })();
   }, []);
   useEffect(() => {
     let active = true;
-    if (!cart.length) {
+    if (!adjustments.lines.length) {
       setQuote(null);
       return () => {
         active = false;
@@ -177,12 +194,7 @@ export default function Register(): React.ReactNode {
     const timer = window.setTimeout(() => {
       void api<CheckoutQuote>('/checkout/quote', {
         method: 'POST',
-        body: JSON.stringify({
-          lines: cart.map((line) => ({
-            variantId: line.variantId,
-            quantity: line.quantity,
-          })),
-        }),
+        body: JSON.stringify({ lines: adjustments.lines, ...(adjustments.orderDiscount ? { orderDiscount: adjustments.orderDiscount } : {}) }),
       })
         .then((result) => {
           if (active) setQuote(isCheckoutQuote(result) ? result : null);
@@ -198,7 +210,7 @@ export default function Register(): React.ReactNode {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [cart]);
+  }, [adjustments]);
 
   const addItem = useCallback((item: CatalogItem) => {
     if (!item.active) {
@@ -288,26 +300,28 @@ export default function Register(): React.ReactNode {
     window.addEventListener('keydown', capture);
     return () => window.removeEventListener('keydown', capture);
   });
-  async function openRegister(): Promise<void> {
+  async function openRegister(openingCashMinor = 10000n, note = ''): Promise<void> {
     try {
       const existing = await api<{ id: string; status: 'OPEN' | 'CLOSING' } | null>('/register-sessions/current');
       if (existing?.status === 'OPEN') {
         setSessionId(existing.id);
+        setUtility('none');
         setMessage('Existing register session restored. Ready to sell.');
         return;
       }
       const [session, store] = await Promise.all([
         api<{ id: string }>('/register-sessions/open', {
           method: 'POST',
-          body: JSON.stringify({ openingCashMinor: '10000' }),
+          body: JSON.stringify({ openingCashMinor: openingCashMinor.toString(), ...(note.trim() ? { note: note.trim() } : {}) }),
         }),
         api<{ taxRateBasisPoints: number }>('/store/current'),
       ]);
       setSessionId(session.id);
       setTaxRate(store.taxRateBasisPoints);
+      setUtility('none');
       setMessage('Register open. Ready to sell.');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not open register');
+      setMessage(friendlyError(error, 'Could not open register'));
     }
   }
   async function checkout(kind: 'cash' | 'terminal', tendered = total.toString()): Promise<void> {
@@ -315,17 +329,16 @@ export default function Register(): React.ReactNode {
       setMessage('Open the register before checkout.');
       return;
     }
+    if (adjustments.active && session.role === 'CASHIER' && !currentElevation()) { requireElevation('Approve the discount to complete this sale.', () => void checkout(kind, tendered)); return; }
     try {
       const result = await api<{ orderId: string }>(`/checkout/${kind}`, {
         method: 'POST',
+        ...(adjustments.active ? withApproval() : {}),
         body: JSON.stringify({
           registerSessionId: sessionId,
           idempotencyKey: crypto.randomUUID(),
-          lines: cart.map((line) => ({
-            variantId: line.variantId,
-            quantity: line.quantity,
-          })),
-          ...(orderDiscount && BigInt(orderDiscount) > 0n ? { orderDiscount: { kind: 'FIXED', amountMinor: orderDiscount }, overrideReason } : {}),
+          lines: adjustments.lines,
+          ...(adjustments.orderDiscount ? { orderDiscount: adjustments.orderDiscount } : {}),
           ageVerified,
           ...(customer ? { customerId: customer.id } : {}),
           ...(kind === 'cash' ? { tenderedMinor: tendered } : { simulatedOutcome: 'APPROVED' }),
@@ -333,7 +346,7 @@ export default function Register(): React.ReactNode {
       });
       await finishSale(result.orderId);
       if (kind === 'cash' && window.rjpos) {
-        const drawerResult = await window.rjpos.openDrawer({ orderId: result.orderId });
+        const drawerResult = await window.rjpos.openDrawer({ orderId: result.orderId, ...sessionHint() });
         if (!drawerResult.ok) setMessage(`Sale complete. ${drawerResult.message}`);
       }
     } catch (error) {
@@ -348,7 +361,7 @@ export default function Register(): React.ReactNode {
     setLoyaltyPoints(0);
     setGiftCode('');
     setGiftAmount('0');
-    setOrderDiscount('');
+    clearAdjustments();
     setOverrideReason('');
     setMessage('Sale complete. Receipt ready to print.');
   }
@@ -376,6 +389,7 @@ export default function Register(): React.ReactNode {
       setMessage('Open the register before checkout.');
       return;
     }
+    if (adjustments.active && session.role === 'CASHIER' && !currentElevation()) { requireElevation('Approve the discount to complete this sale.', () => void mixedCheckout(kind)); return; }
     try {
       const amount = BigInt(giftAmount || '0');
       const benefit = amount + BigInt(loyaltyPoints) * BigInt(loyaltyProgram?.redeemMinorPerPoint ?? '0');
@@ -384,13 +398,12 @@ export default function Register(): React.ReactNode {
       const remainder = rawRemainder < 0n ? 0n : rawRemainder;
       const result = await api<{ orderId: string }>('/checkout/mixed', {
         method: 'POST',
+        ...(adjustments.active ? withApproval() : {}),
         body: JSON.stringify({
           registerSessionId: sessionId,
           idempotencyKey: crypto.randomUUID(),
-          lines: cart.map((line) => ({
-            variantId: line.variantId,
-            quantity: line.quantity,
-          })),
+          lines: adjustments.lines,
+          ...(adjustments.orderDiscount ? { orderDiscount: adjustments.orderDiscount } : {}),
           ageVerified,
           ...(customer ? { customerId: customer.id } : {}),
           ...(giftCode && amount > 0n
@@ -469,58 +482,48 @@ export default function Register(): React.ReactNode {
       return;
     }
     try {
-      await api(`/orders/${returnOrder.id}/refund`, { method: 'POST', body: JSON.stringify({ reason: returnReason, idempotencyKey: crypto.randomUUID(), items }) });
+      await api(`/orders/${returnOrder.id}/refund`, { method: 'POST', ...withApproval(), body: JSON.stringify({ reason: returnReason, idempotencyKey: crypto.randomUUID(), items }) });
       setUtility('none');
       setReturnOrder(null);
       setMessage('Return completed. Refund and stock movement were recorded.');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Return could not be completed.');
+      setMessage(friendlyError(error, 'Return could not be completed.'));
     }
   }
-  async function loadInventory(): Promise<void> {
-    try {
-      setInventory(await api('/inventory'));
-      setView('inventory');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Inventory failed');
-    }
+  function beginClose(clockOut: boolean): void { setCloseCash(''); setCloseWithClockOut(clockOut); setUtility('close'); }
+  async function loadShiftReport(id: string): Promise<void> {
+    setShiftReport(await api<ShiftReport>(`/register-sessions/${id}/report`, withApproval()));
+    setUtility('report');
   }
-  async function closeRegister(): Promise<void> {
-    if (!sessionId) return;
+  async function confirmClose(): Promise<void> {
+    const counted = parseDollarsToMinor(closeCash);
+    if (counted === null) { setMessage('Enter the counted cash, for example 100.00.'); return; }
     try {
-      await api(`/register-sessions/${sessionId}/close`, {
-        method: 'POST',
-        body: JSON.stringify({ countedCashMinor: '10000' }),
-      });
-      setSessionId('');
-      setMessage('Register closed. Cash difference is recorded.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not close register');
-    }
-  }
-  async function endShift(): Promise<void> {
-    try {
-      if (sessionId) {
-        await api(`/register-sessions/${sessionId}/close`, { method: 'POST', body: JSON.stringify({ countedCashMinor: '10000' }) });
+      const closingId = sessionId;
+      if (closingId) {
+        await api(`/register-sessions/${closingId}/close`, { method: 'POST', body: JSON.stringify({ countedCashMinor: counted.toString() }) });
         setSessionId('');
       }
-      if (clockedIn) {
+      if (closeWithClockOut && clockedIn) {
         await api('/workforce/clock-out', { method: 'POST', body: '{}' });
         setClockedIn(false);
       }
-      setMessage('Shift ended. Register closed and cashier clocked out.');
-    } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not end shift.'); }
+      setMessage(closeWithClockOut ? 'Shift ended. Register closed and cashier clocked out.' : 'Register closed. Cash difference is recorded.');
+      endedShift.current = closeWithClockOut;
+      if (closingId) await loadShiftReport(closingId);
+      else { setUtility('none'); if (closeWithClockOut) onLock(); }
+    } catch (error) { setMessage(friendlyError(error, 'Could not close the register.')); }
   }
   function voidCart(): void {
     if (!cart.length) return;
-    setCart([]); setCustomer(null); setAgeVerified(false); setOrderDiscount(''); setOverrideReason('');
+    setCart([]); setCustomer(null); setAgeVerified(false); clearAdjustments(); setOverrideReason('');
     setMessage('Current cart cleared. No sale was recorded.');
   }
   async function holdSale(): Promise<void> {
     if (!cart.length) { setMessage('Add an item before holding this sale.'); return; }
     try {
       await api('/held-transactions', { method: 'POST', body: JSON.stringify({ idempotencyKey: crypto.randomUUID(), label: customer?.name || `Cart · ${cart.length} item${cart.length === 1 ? '' : 's'}`, cart: { lines: cart, ...(customer ? { customerId: customer.id } : {}), ageVerified } }) });
-      setCart([]); setCustomer(null); setAgeVerified(false); setMessage('Sale held. You can resume it from this register.');
+      setCart([]); setCustomer(null); setAgeVerified(false); clearAdjustments(); setMessage('Sale held. You can resume it from this register.');
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not hold sale.'); }
   }
   async function showHeld(): Promise<void> {
@@ -538,13 +541,15 @@ export default function Register(): React.ReactNode {
     const reason = overrideReason.trim();
     if (!reason) { setMessage('Enter a reason for the manual drawer open.'); return; }
     if (!window.rjpos) { setMessage('Cash drawer controls are available in the register application.'); return; }
-    const result = await window.rjpos.openDrawer({ reason });
+    const approval = currentElevation();
+    if (!approval && session.role === 'CASHIER') { setMessage('Manager approval expired. Approve again.'); return; }
+    const result = await window.rjpos.openDrawer({ reason, ...(approval ? { elevationToken: approval.token } : {}), ...sessionHint() });
     setMessage(result.message); if (result.ok) { setUtility('none'); setOverrideReason(''); }
   }
   async function printCurrentReceipt(): Promise<void> {
     if (!receipt) return;
     if (!window.rjpos) { window.print(); return; }
-    const result = await window.rjpos.printReceipt(receipt.id); setMessage(result.message);
+    const result = await window.rjpos.printReceipt(receipt.id, getApiSessionToken() ?? undefined); setMessage(result.message);
   }
 
   return (
@@ -552,18 +557,19 @@ export default function Register(): React.ReactNode {
       <header className="topbar">
         <div>
           <span className="eyebrow">RJ POS</span>
-          <h1>Downtown Register</h1>
+          <h1>{storeName} Register</h1>
         </div>
         <div className={`status ${sessionId ? 'open' : ''}`}>
           <span />
           {sessionId ? 'Register open' : 'Register closed'}
         </div>
         <div className={`status ${online ? 'open' : 'offline'}`}><span />{online ? 'Server online' : 'Server unavailable'}</div>
-        <div className="cashier-summary"><strong>Demo Owner</strong><small>{clockedIn ? 'Clocked in' : 'Clocked out'} · {customer?.name ?? 'Walk-in'}</small></div>
+        <div className="cashier-summary"><strong>{session.employee.name}</strong><small>{session.role === 'OWNER' ? 'Owner' : session.role === 'MANAGER' ? 'Manager' : 'Cashier'} · {clockedIn ? 'Clocked in' : 'Clocked out'} · {customer?.name ?? 'Walk-in'}</small>{isElevationActive(elevation) && <button className="text" onClick={() => grantElevation(null)}>Approved by {elevation.approver.name} · tap to lock</button>}</div>
         <nav>
           <button onClick={() => setView('register')}>Register</button>
-          <button onClick={() => void loadInventory()}>Inventory</button>
+          <button onClick={() => setView('inventory')}>Inventory</button>
           <button onClick={() => void loadHistory()}>Orders</button>
+          <button onClick={onLock}>Lock</button>
         </nav>
       </header>
       {view === 'register' && (<>
@@ -571,11 +577,11 @@ export default function Register(): React.ReactNode {
           <section className="workspace">
             <div className="session-actions">
               {!sessionId ? (
-                <button className="primary" onClick={() => void openRegister()}>
-                  Open register · $100.00
+                <button className="primary" onClick={() => setUtility('open')}>
+                  Open register
                 </button>
               ) : (
-                <button className="quiet" onClick={() => void closeRegister()}>
+                <button className="quiet" onClick={() => beginClose(false)}>
                   Close register
                 </button>
               )}
@@ -625,15 +631,17 @@ export default function Register(): React.ReactNode {
                 <div className="product-search-results" id="product-search-results" role="listbox" aria-label="Product search results">
                   {searchResults.map((item) => (
                     <button id={`product-result-${item.variantId}`} key={item.variantId} role="option" aria-selected={highlightedResult === searchResults.indexOf(item)} className={highlightedResult === searchResults.indexOf(item) ? 'highlighted' : ''} onMouseEnter={() => setHighlightedResult(searchResults.indexOf(item))} onClick={() => selectSearchResult(item)}>
-                      <span><strong>{item.productName}</strong><small>{item.variantName} · {item.sku}{item.barcode ? ` · ${item.barcode}` : ''}</small></span>
-                      <b>{item.priceMinor === null ? 'No price' : money(item.priceMinor)}</b>
+                      <strong className="result-name">{item.productName}</strong>
+                      <span className="result-meta">{item.variantName}</span>
+                      <span className="result-code">UPC {item.barcode ?? '—'} · SKU {item.sku}</span>
+                      <b className="result-price">{item.priceMinor === null ? 'No price' : money(item.priceMinor)}</b>
                     </button>
                   ))}
                 </div>
               )}
             </div>
             <section className="quick-keys" aria-label="Quick Add">
-              <div className="quick-title"><h2>Quick Add</h2>{quickKeys.length === 0 && <small>No quick items configured.</small>}</div>
+              <div className="quick-title"><h2>Quick Add</h2>{quickKeys.length === 0 && <small>No quick items yet.</small>}<button className="text" onClick={() => requireElevation('Approve managing Quick Add buttons.', () => window.location.assign('/admin/register-settings/'))}>Manage</button></div>
               {quickKeys.length > 0 && <>
                 <div className="quick-groups"><button className={quickGroup === 'All' ? 'active' : ''} onClick={() => setQuickGroup('All')}>All</button>{[...new Set(quickKeys.map((key) => key.groupName))].map((group) => <button className={quickGroup === group ? 'active' : ''} key={group} onClick={() => setQuickGroup(group)}>{group}</button>)}</div>
                 <div className="quick-grid">{quickKeys.filter((key) => quickGroup === 'All' || key.groupName === quickGroup).map((key) => <button key={key.id} disabled={!key.active || key.priceMinor === null} onClick={() => addItem(key)}><strong>{key.label}</strong><small>{key.priceMinor ? money(key.priceMinor) : 'No price'}</small></button>)}</div>
@@ -641,7 +649,7 @@ export default function Register(): React.ReactNode {
             </section>
             <div className="cart-head">
               <h2>Current sale</h2>
-              <button className="text" onClick={() => setCart([])}>
+              <button className="text" onClick={() => { setCart([]); clearAdjustments(); }}>
                 Clear cart
               </button>
             </div>
@@ -653,48 +661,9 @@ export default function Register(): React.ReactNode {
                   <small>Scanned items appear here.</small>
                 </div>
               )}
-              {cart.map((line) => {
-                const priced = quote?.lines.find((item) => item.variantId === line.variantId);
-                return (
-                  <article key={line.variantId} className="line">
-                    <div>
-                      <strong>{line.productName}</strong>
-                      <small>
-                        {line.variantName} · {line.sku}
-                        {line.ageRestricted ? ' · 21+' : ''}
-                      </small>
-                      {priced?.promotionName && (
-                        <small>
-                          {priced.promotionName} · save {money(priced.discountMinor)}
-                        </small>
-                      )}
-                    </div>
-                    <div className="quantity">
-                      <button onClick={() => setCart((rows) => rows.flatMap((row) => (row.variantId !== line.variantId ? [row] : row.quantity === 1 ? [] : [{ ...row, quantity: row.quantity - 1 }])))}>−</button>
-                      <input
-                        aria-label="Quantity"
-                        value={line.quantity}
-                        onChange={(event) => {
-                          const quantity = Math.max(1, Number(event.target.value) || 1);
-                          setCart((rows) => rows.map((row) => (row.variantId === line.variantId ? { ...row, quantity } : row)));
-                        }}
-                      />
-                      <button onClick={() => setCart((rows) => rows.map((row) => (row.variantId === line.variantId ? { ...row, quantity: row.quantity + 1 } : row)))}>+</button>
-                    </div>
-                    <b>
-                      {priced && BigInt(priced.discountMinor) > 0n ? (
-                        <>
-                          <s>{money(priced.subtotalMinor)}</s>
-                          <br />
-                          {money(priced.totalMinor)}
-                        </>
-                      ) : (
-                        money(BigInt(line.priceMinor!) * BigInt(line.quantity))
-                      )}
-                    </b>
-                  </article>
-                );
-              })}
+              {cart.map((line) => (
+                <CartLine key={line.variantId} line={line} priced={quote?.lines.find((item) => item.variantId === line.variantId)} manualDiscount={Boolean(lineAdjustments[line.variantId])} onQuantity={(quantity) => setQuantity(line.variantId, quantity)} onRemove={() => removeLine(line.variantId)} />
+              ))}
             </div>
           </section>
           <aside className="checkout">
@@ -706,7 +675,7 @@ export default function Register(): React.ReactNode {
               </div>
               {discount > 0n && (
                 <div>
-                  <dt>Promotions</dt>
+                  <dt>{adjustments.active ? 'Discounts' : 'Promotions'}</dt>
                   <dd>−{money(discount)}</dd>
                 </div>
               )}
@@ -741,6 +710,7 @@ export default function Register(): React.ReactNode {
                   <div>
                     <input aria-label="Customer search" value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Find customer" />
                     <button onClick={() => void findCustomers()}>Find</button>
+                    <button onClick={() => setUtility('customer')}>New</button>
                   </div>
                   {customerResults.map((result) => (
                     <button className="customer-result" key={result.id} onClick={() => void selectCustomer(result)}>
@@ -791,37 +761,21 @@ export default function Register(): React.ReactNode {
           </aside>
         </div>
         <div className="action-bar" aria-label="Register actions">
-          <button onClick={() => setUtility('discount')}>Discount / Price</button>
+          <button onClick={() => requireElevation('Approve a discount or custom price.', () => setUtility('discount'))}>Discount / Price</button>
           <button className={priceCheckMode ? 'confirmed' : ''} onClick={() => { setPriceCheckMode(true); scanInput.current?.focus(); setMessage('Price-check mode: scan or select an item. It will not be added to the cart.'); }}>Price Check</button>
           <button onClick={() => document.querySelector<HTMLInputElement>('[aria-label="Customer search"]')?.focus()}>Customer</button>
           <button disabled={!cart.some((line) => line.ageRestricted)} className={ageVerified ? 'confirmed' : ''} onClick={() => setAgeVerified((value) => !value)}>Age Check</button>
           <button disabled={!cart.length} onClick={() => void holdSale()}>Hold</button>
           <button onClick={() => void showHeld()}>Resume</button>
           <button disabled={!cart.length} className="danger" onClick={voidCart}>Void Cart</button>
-          <button onClick={() => void showReturns()}>Return</button>
+          <button onClick={() => requireElevation('Approve a return.', () => void showReturns())}>Return</button>
           <button disabled={!receipt} onClick={() => void printCurrentReceipt()}>Reprint</button>
-          <button onClick={() => setUtility('drawer')}>Drawer</button>
+          <button onClick={() => requireElevation('Approve opening the cash drawer.', () => setUtility('drawer'))}>Drawer</button>
           <button onClick={() => document.querySelector<HTMLInputElement>('[aria-label="Gift-card code"]')?.focus()}>Gift Card</button>
-          <button disabled={!sessionId && !clockedIn} className="danger" onClick={() => void endShift()}>End Shift</button>
+          <button disabled={!sessionId && !clockedIn} className="danger" onClick={() => beginClose(true)}>End Shift</button>
         </div>
       </>)}
-      {view === 'inventory' && (
-        <section className="management">
-          <span className="eyebrow">Management</span>
-          <h2>Inventory</h2>
-          <p>Every opening balance and reason-coded adjustment creates a ledger movement and audit record.</p>
-          {inventory.map((level) => (
-            <article className="history" key={level.id}>
-              <strong>
-                {level.variant.product.name} · {level.variant.name}
-              </strong>
-              <span>{level.variant.sku}</span>
-              <b>{level.onHand - level.reserved} available</b>
-            </article>
-          ))}
-          <button onClick={() => setView('register')}>Back to register</button>
-        </section>
-      )}
+      {view === 'inventory' && <InventoryView storeName={storeName} onBack={() => setView('register')} />}
       {view === 'orders' && (
         <section className="management">
           <span className="eyebrow">Sales history</span>
@@ -839,10 +793,15 @@ export default function Register(): React.ReactNode {
       {utility !== 'none' && (
         <div className="modal" role="dialog" aria-label={`${utility} utility`}>
           <section className="utility-modal">
-            <button className="close" aria-label="Close" onClick={() => setUtility('none')}>×</button>
+            <button className="close" aria-label="Close" onClick={closeUtility}>×</button>
             {utility === 'resume' && <><h2>Resume a held sale</h2>{heldTransactions.length === 0 ? <p>No held sales on this register.</p> : heldTransactions.map((held) => <button className="held-sale" key={held.id} onClick={() => void resumeSale(held.id)}><strong>{held.label}</strong><span>{new Date(held.heldAt).toLocaleTimeString()} · {held.employee.firstName} {held.employee.lastName}</span><small>{held.cartJson.lines.length} lines{held.customer ? ` · ${held.customer.name}` : ''}</small></button>)}</>}
             {utility === 'return' && <><h2>Return items</h2>{!returnOrder ? <>{history.filter((order) => ['COMPLETED', 'PARTIALLY_REFUNDED'].includes(order.status)).map((order) => <button className="held-sale" key={order.id} onClick={() => void selectReturnOrder(order.id)}><strong>{order.orderNumber}</strong><span>{order.status}</span><small>{money(order.totalMinor)}</small></button>)}{history.every((order) => !['COMPLETED', 'PARTIALLY_REFUNDED'].includes(order.status)) && <p>No refundable orders found.</p>}</> : <><button className="text" onClick={() => setReturnOrder(null)}>← Choose another order</button><p><strong>{returnOrder.orderNumber}</strong></p>{returnOrder.items.map((item) => { const remaining = item.quantity - refundedQuantity(returnOrder, item.id); return <label className="return-line" key={item.id}><span>{item.productNameSnapshot} · {item.variantNameSnapshot}<small>{remaining} available to return</small></span><input aria-label={`Return quantity for ${item.productNameSnapshot}`} type="number" min="0" max={remaining} disabled={remaining === 0} value={returnQuantities[item.id] ?? 0} onChange={(event) => setReturnQuantities((current) => ({ ...current, [item.id]: Math.min(remaining, Math.max(0, Number(event.target.value) || 0)) }))} /></label>; })}<label>Required reason<input aria-label="Return reason" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} /></label><button className="danger" disabled={!returnReason.trim() || !Object.values(returnQuantities).some((quantity) => quantity > 0)} onClick={() => void submitReturn()}>Confirm refund and return to stock</button></>}</>}
-            {utility === 'discount' && <><h2>Manager price override</h2><p>The server records the reason and manager identity.</p><label>Discount amount, cents<input inputMode="numeric" aria-label="Override discount cents" value={orderDiscount} onChange={(event) => setOrderDiscount(event.target.value.replace(/\D/g, ''))} /></label><label>Required reason<input aria-label="Override reason" value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} /></label><button className="primary" disabled={!orderDiscount || !overrideReason.trim()} onClick={() => { setUtility('none'); setMessage('Price override ready. It will be audited when payment completes.'); }}>Apply to sale</button></>}
+            {utility === 'approve' && <ElevationDialog reason={approveReason} onGranted={(granted) => { grantElevation(granted); const action = pendingAction.current; pendingAction.current = null; setUtility('none'); action?.(); }} />}
+            {utility === 'open' && <OpenRegisterDialog onOpen={(cash, note) => void openRegister(cash, note)} />}
+            {utility === 'customer' && <CustomerCreateForm onCreated={(created) => { setUtility('none'); void selectCustomer(created); setMessage(`${created.name} added and selected.`); }} />}
+            {utility === 'discount' && <DiscountDialog hasAdjustments={adjustments.active} lines={cart.map((line) => ({ variantId: line.variantId, productName: line.productName, variantName: line.variantName, priceMinor: line.priceMinor, quantity: line.quantity }))} onClear={() => { clearAdjustments(); setUtility('none'); setMessage('Discounts removed.'); }} onApply={(target, adjustment) => { if (target.scope === 'cart') setCartAdjustment(adjustment); else setLineAdjustments((current) => ({ ...current, [target.variantId]: adjustment })); setUtility('none'); setMessage('Discount applied. Totals updated.'); }} />}
+            {utility === 'close' && <><h2>{closeWithClockOut ? 'End shift' : 'Close register'}</h2><p>Count the cash in the drawer and enter the total.</p><form onSubmit={(event) => { event.preventDefault(); void confirmClose(); }}><label>Counted cash<input aria-label="Counted cash" inputMode="decimal" autoFocus value={closeCash} onChange={(event) => setCloseCash(event.target.value.replace(/[^\d.$]/g, ''))} /></label><button className="danger" disabled={parseDollarsToMinor(closeCash) === null}>{closeWithClockOut ? 'Close register and clock out' : 'Close register'}</button></form></>}
+            {utility === 'report' && shiftReport && <><ShiftReportView report={shiftReport} />{!shiftReport.detail && <button className="quiet" onClick={() => requireElevation('Manager approval is needed to view the detailed shift report.', () => void loadShiftReport(shiftReport.sessionId).catch((error) => setMessage(friendlyError(error, 'Could not load the report.'))))}>Manager: detailed report</button>}<button className="primary" onClick={closeUtility}>Done</button></>}
             {utility === 'drawer' && <><h2>Manual drawer open</h2><p className="warning">Manager authorization and a reason are required. This action is audited.</p><label>Reason<input aria-label="Drawer reason" value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} /></label><button className="danger" onClick={() => void manualDrawerOpen()}>Authorize and open drawer</button></>}
           </section>
         </div>
@@ -896,4 +855,22 @@ export default function Register(): React.ReactNode {
       )}
     </main>
   );
+}
+
+export default function Register(): React.ReactNode {
+  const [session, setSession] = useState<RegisterSession | null>(null);
+  const [ready, setReady] = useState(false);
+  const lock = useCallback(() => {
+    // Best-effort audit of the sign-out; the local session is cleared regardless.
+    if (getApiSessionToken()) void api('/auth/logout', { method: 'POST', body: '{}' }).catch(() => undefined);
+    setApiSession(null); storeSession(null); setSession(null);
+  }, []);
+  const signIn = useCallback((next: RegisterSession) => { setApiSession(next.token, lock); storeSession(next); setSession(next); }, [lock]);
+  useEffect(() => {
+    const stored = loadStoredSession();
+    if (stored) { setApiSession(stored.token, lock); setSession(stored); }
+    setReady(true);
+  }, [lock]);
+  if (!ready) return null;
+  return session ? <RegisterWorkspace key={session.employee.id} session={session} onLock={lock} /> : <LockScreen onSignedIn={signIn} />;
 }
