@@ -106,7 +106,7 @@ describe('Settings → Taxes', () => {
 });
 
 describe('Invoice cost review panel', () => {
-  it('shows case economics and highlights disagreements without changing anything', () => {
+  it('shows case economics and highlights disagreements without changing anything', async () => {
     const toggles: Array<[string, boolean]> = [];
     const document = { id: 'inv-1', subtotalMinor: '85000', totalMinor: '85500', feesMinor: '500', poReference: 'PO-1', lines: [{ id: 'line-1', lineNumber: 1, description: 'Vodka', quantity: 5, casesReceived: 4, updateVendorCost: false }] };
     const review = { invoiceId: 'inv-1', hasDiscrepancies: true, totals: { linesSubtotalMinor: '85000', expectedTotalMinor: '85500', discrepancies: [{ code: 'TOTAL_MISMATCH', message: 'Subtotal − discounts + tax + fees does not equal the printed total.', expectedMinor: '85500', actualMinor: '86000' }] },
@@ -118,6 +118,7 @@ describe('Invoice cost review panel', () => {
     expect(within(row).getByText('$180.00')).toBeTruthy(); expect(within(row).getByText('$10.00')).toBeTruthy(); expect(within(row).getByText('$170.00')).toBeTruthy(); expect(within(row).getByText('$14.17')).toBeTruthy(); expect(within(row).getByText('48')).toBeTruthy();
     expect(within(row).getByText(/Ordered 5 cases but 4 received/)).toBeTruthy();
     const box = screen.getByLabelText('Update vendor cost line 1') as HTMLInputElement; expect(box.checked).toBe(false);
-    userEvent.setup().click(box).then(() => expect(toggles).toEqual([['line-1', true]]));
+    await userEvent.setup().click(box);
+    expect(toggles).toEqual([['line-1', true]]);
   });
 });
