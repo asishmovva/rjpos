@@ -9,6 +9,8 @@
     "typecheck": "turbo run typecheck",
     "test": "pnpm test:prepare && turbo run test",
     "test:prepare": "pnpm --filter @rjpos/database test:prepare",
+    "backup:database": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/backup-database.ps1",
+    "restore:database": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restore-database.ps1",
     "format": "prettier --write ."
   },
   "devDependencies": {

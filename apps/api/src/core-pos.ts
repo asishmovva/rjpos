@@ -27,13 +27,14 @@ import {
   parseMoneyApi,
   postOpeningBalance,
   quoteCheckout,
+  recordAudit,
   refundOrder,
   searchOrders,
   voidOrder,
   type CheckoutContext,
 } from '@rjpos/database';
 import type { CartDiscount } from '@rjpos/domain-types';
-import type { SimulatedTerminalProvider } from '@rjpos/payment-contracts';
+import { SimulatedTerminalProvider, type TerminalPaymentProvider } from '@rjpos/payment-contracts';
 import {
   contextFromDevelopmentHeaders,
   TenantContextService,
@@ -61,6 +62,7 @@ type CheckoutBody = {
   ageVerified?: boolean;
   tenderedMinor?: string;
   customerId?: string;
+  overrideReason?: string;
 };
 
 function discountFromBody(discount: DiscountBody | undefined): CartDiscount | undefined {
@@ -74,7 +76,7 @@ function discountFromBody(discount: DiscountBody | undefined): CartDiscount | un
 export class CorePosController {
   constructor(
     @Inject(PRISMA) private readonly prisma: PrismaClient,
-    @Inject(TERMINAL_PROVIDER) private readonly terminal: SimulatedTerminalProvider,
+    @Inject(TERMINAL_PROVIDER) private readonly terminal: TerminalPaymentProvider,
     @Inject(TenantContextService) private readonly tenants: TenantContextService,
   ) {}
 
@@ -155,6 +157,16 @@ export class CorePosController {
       ...(body.customerId ? { customerId: body.customerId } : {}) };
   }
 
+  private requireDiscountAuthorization(context: AuthenticatedTenantContext, body: CheckoutBody): void {
+    if (!body.lines.some((line) => line.discount) && !body.orderDiscount) return;
+    if (!context.permissions.has('price:override') || !body.overrideReason?.trim()) throw new ForbiddenException();
+  }
+
+  private async auditOverride(context: AuthenticatedTenantContext & { storeId: string; registerId: string }, body: CheckoutBody, result: { orderId: string }): Promise<void> {
+    if (!body.lines.some((line) => line.discount) && !body.orderDiscount) return;
+    await recordAudit(this.prisma, { organizationId: context.organizationId, action: 'PRICE_OVERRIDE_APPLIED', entityType: 'Order', entityId: result.orderId, afterJson: { employeeId: context.userId, storeId: context.storeId, registerId: context.registerId, reason: body.overrideReason?.trim(), overriddenVariantIds: body.lines.filter((line) => line.discount).map((line) => line.variantId), orderDiscount: Boolean(body.orderDiscount) } });
+  }
+
   @Post('checkout/quote')
   quote(@Req() request: TenantRequest, @Body() body: { lines: Array<{ variantId: string; quantity: number }> }) {
     const context = this.context(request, 'sale:create');
@@ -162,40 +174,46 @@ export class CorePosController {
   }
 
   @Post('checkout/cash')
-  cash(@Req() request: TenantRequest, @Body() body: CheckoutBody) {
+  async cash(@Req() request: TenantRequest, @Body() body: CheckoutBody) {
     const context = this.context(request, 'sale:create');
-    if (body.lines.some((line) => line.discount) || body.orderDiscount) {
-      if (!context.permissions.has('discount:apply')) throw new ForbiddenException();
-    }
+    this.requireDiscountAuthorization(context, body);
     if (body.tenderedMinor === undefined) throw new Error('TENDERED_MINOR_REQUIRED');
-    return checkoutCash(this.prisma, { ...this.checkoutInput(context, body), tenderedMinor: parseMoneyApi(body.tenderedMinor) });
+    const result = await checkoutCash(this.prisma, { ...this.checkoutInput(context, body), tenderedMinor: parseMoneyApi(body.tenderedMinor) });
+    await this.auditOverride(context, body, result);
+    return result;
   }
 
   @Post('checkout/terminal')
-  terminalCheckout(@Req() request: TenantRequest, @Body() body: CheckoutBody & { simulatedOutcome?: string }) {
+  async terminalCheckout(@Req() request: TenantRequest, @Body() body: CheckoutBody & { simulatedOutcome?: string }) {
     const context = this.context(request, 'sale:create');
-    if (body.simulatedOutcome) this.terminal.setOutcome(body.simulatedOutcome as Parameters<SimulatedTerminalProvider['setOutcome']>[0]);
-    return checkoutTerminal(this.prisma, this.terminal, this.checkoutInput(context, body));
+    this.requireDiscountAuthorization(context, body);
+    if (body.simulatedOutcome && this.terminal instanceof SimulatedTerminalProvider) this.terminal.setOutcome(body.simulatedOutcome as Parameters<SimulatedTerminalProvider['setOutcome']>[0]);
+    const result = await checkoutTerminal(this.prisma, this.terminal, this.checkoutInput(context, body));
+    await this.auditOverride(context, body, result);
+    return result;
   }
 
   @Post('checkout/mixed')
-  mixedCheckout(@Req() request: TenantRequest, @Body() body: CheckoutBody & {
+  async mixedCheckout(@Req() request: TenantRequest, @Body() body: CheckoutBody & {
     giftCards?: Array<{ code: string; amountMinor: string }>;
     loyaltyPoints?: number;
     remainder: { kind: 'CASH'; tenderedMinor: string } | { kind: 'TERMINAL'; simulatedOutcome?: string };
   }) {
     const context = this.context(request, 'sale:create');
+    this.requireDiscountAuthorization(context, body);
     if ((body.giftCards?.length ?? 0) > 0 && !context.permissions.has('giftcard:redeem')) throw new ForbiddenException();
     if (body.remainder.kind === 'TERMINAL' && body.remainder.simulatedOutcome) {
-      this.terminal.setOutcome(body.remainder.simulatedOutcome as Parameters<SimulatedTerminalProvider['setOutcome']>[0]);
+      if (this.terminal instanceof SimulatedTerminalProvider) this.terminal.setOutcome(body.remainder.simulatedOutcome as Parameters<SimulatedTerminalProvider['setOutcome']>[0]);
     }
-    return checkoutMixed(this.prisma, this.terminal, this.checkoutInput(context, body), {
+    const result = await checkoutMixed(this.prisma, this.terminal, this.checkoutInput(context, body), {
       ...(body.giftCards ? { giftCards: body.giftCards.map((item) => ({ code: item.code, amountMinor: parseMoneyApi(item.amountMinor) })) } : {}),
       ...(body.loyaltyPoints === undefined ? {} : { loyaltyPoints: body.loyaltyPoints }),
       remainder: body.remainder.kind === 'CASH'
         ? { kind: 'CASH', tenderedMinor: parseMoneyApi(body.remainder.tenderedMinor) }
         : { kind: 'TERMINAL' },
     });
+    await this.auditOverride(context, body, result);
+    return result;
   }
 
   @Get('orders')

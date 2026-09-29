@@ -1,0 +1,21 @@
+{
+  "vendorName": "Development Supply Co",
+  "invoiceNumber": "DEV-INV-1001",
+  "invoiceDate": "2026-09-28T00:00:00.000Z",
+  "subtotalMinor": "3998",
+  "taxMinor": "0",
+  "totalMinor": "3998",
+  "confidence": 0.98,
+  "lines": [
+    {
+      "description": "Tito's Handmade Vodka 750 ml",
+      "upc": "619947000020",
+      "vendorSku": "DEV-TITO-750",
+      "quantity": 2,
+      "caseQuantity": 1,
+      "unitCostMinor": "1999",
+      "lineTotalMinor": "3998",
+      "confidence": 0.99
+    }
+  ]
+}

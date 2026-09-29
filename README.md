@@ -22,7 +22,22 @@ pnpm --filter "@rjpos/web" dev
 pnpm --filter "@rjpos/register" dev
 ```
 
-The web application listens explicitly on port 3000. During development, Electron loads `RJPOS_RENDERER_URL` from the repository-root `.env`, falling back to `http://localhost:3000`. It allows up to 60 seconds for a concurrently-starting Next.js server to become reachable before showing a visible error page; it never enters an automatic reload loop. If the bounded startup window expires but the web server later becomes reachable, restart only the register with `pnpm --filter "@rjpos/register" dev`. A packaged Electron application loads its copied local `renderer.html` instead. Renderer code remains sandboxed behind the preload bridge and `hardware:status` IPC; it does not access Prisma or PostgreSQL directly.
+The web application listens explicitly on port 3000. During development, Electron loads `RJPOS_RENDERER_URL` from the repository-root `.env`, falling back to `http://localhost:3000`. It allows up to 60 seconds for a concurrently-starting Next.js server to become reachable before showing a visible error page; it never enters an automatic reload loop. If the bounded startup window expires but the web server later becomes reachable, restart only the register with `pnpm --filter "@rjpos/register" dev`. A packaged Electron application loads the exported local Next renderer from its resources and never loads a development URL. Renderer code remains sandboxed behind the narrow preload bridge; it does not access Prisma or PostgreSQL directly.
+
+## Phase 7 production operations
+
+Build the Windows NSIS installer with `pnpm --filter "@rjpos/register" package:win`. Output is written below `apps/register/release/` and is intentionally Git-ignored. Production defaults never simulate a successful terminal or physical hardware operation. Configure a certified terminal only with `RJPOS_TERMINAL_PROVIDER=http`, an HTTPS `RJPOS_TERMINAL_ENDPOINT`, and a locally supplied `RJPOS_TERMINAL_TOKEN`. Never commit the token.
+
+Assisted invoice receiving is available under Back Office → Invoice receiving. Image/PDF uploads are accepted, but production deliberately reports OCR unavailable until a provider adapter is configured. Development can use `RJPOS_INVOICE_OCR_PROVIDER=fixture` and upload `docs/phase-7/invoice-ocr-fixture.json`; extraction remains a draft until an owner or manager reviews product matches and confirms ledger-backed receiving.
+
+Create a custom-format development database backup with `pnpm backup:database`. The default repository-local `backups/` folder is Git-ignored and retains 14 days. Restore validation is deliberately restricted to a database ending in `_restore_test`:
+
+```powershell
+$backup = Get-ChildItem backups\rjpos-*.dump | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+pnpm restore:database -- -BackupPath $backup.FullName -TargetDatabase rjpos_restore_test
+```
+
+See `docs/phase-7/` for hardware prerequisites, adapter behavior, packaging, and production QA.
 
 Payment provider credentials and certified hardware are intentionally not required for Phase 0. The first payment implementation is the simulated terminal contract.
 

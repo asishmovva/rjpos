@@ -39,6 +39,38 @@ export interface TerminalPaymentProvider {
   ): Promise<TerminalPaymentResult>;
 }
 
+export type TerminalProviderConfiguration = { endpoint: string; token: string; timeoutMilliseconds?: number };
+export class HttpTerminalProvider implements TerminalPaymentProvider {
+  private readonly endpoint: string;
+  constructor(private readonly configuration: TerminalProviderConfiguration, private readonly fetcher: typeof fetch = fetch) {
+    const url = new URL(configuration.endpoint);
+    if (url.protocol !== 'https:' && !['127.0.0.1', 'localhost'].includes(url.hostname)) throw new Error('TERMINAL_ENDPOINT_HTTPS_REQUIRED');
+    if (!configuration.token) throw new Error('TERMINAL_CREDENTIAL_REQUIRED');
+    this.endpoint = url.href.replace(/\/$/, '');
+  }
+  private async command(path: string, body: Record<string, string | undefined>): Promise<TerminalPaymentResult> {
+    try {
+      const response = await this.fetcher(`${this.endpoint}${path}`, { method: 'POST', headers: { authorization: `Bearer ${this.configuration.token}`, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(this.configuration.timeoutMilliseconds ?? 30_000) });
+      if (!response.ok) return { status: response.status >= 500 ? 'UNKNOWN' : 'FAILED', failureCode: `PROVIDER_HTTP_${response.status}` };
+      const value = await response.json() as TerminalPaymentResult;
+      if (!['SUCCEEDED', 'DECLINED', 'CANCELLED', 'UNKNOWN', 'FAILED'].includes(value.status)) return { status: 'UNKNOWN', failureCode: 'PROVIDER_RESPONSE_INVALID' };
+      return value;
+    } catch { return { status: 'UNKNOWN', failureCode: 'PROVIDER_UNREACHABLE' }; }
+  }
+  authorize(command: TerminalPaymentCommand) { return this.command('/authorize', command); }
+  cancel(attemptId: string, idempotencyKey: string) { return this.command('/cancel', { attemptId, idempotencyKey }); }
+  getStatus(attemptId: string, providerTransactionId?: string) { return this.command('/status', { attemptId, providerTransactionId }); }
+  refund(providerTransactionId: string, amountMinor: string, idempotencyKey: string) { return this.command('/refund', { providerTransactionId, amountMinor, idempotencyKey }); }
+}
+
+export class UnavailableTerminalProvider implements TerminalPaymentProvider {
+  private unavailable(): TerminalPaymentResult { return { status: 'FAILED', failureCode: 'TERMINAL_PROVIDER_NOT_CONFIGURED' }; }
+  async authorize() { return this.unavailable(); }
+  async cancel() { return this.unavailable(); }
+  async getStatus() { return this.unavailable(); }
+  async refund() { return this.unavailable(); }
+}
+
 export const simulatedTerminalOutcomes = [
   'APPROVED',
   'DECLINED',
