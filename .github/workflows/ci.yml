@@ -54,6 +54,8 @@ jobs:
       - run: cp .env.test.example .env.test
       - run: pnpm --filter @rjpos/database db:deploy
       - run: pnpm --filter @rjpos/database prisma:generate
+      # The seed imports database sources that depend on the built domain-types package.
+      - run: pnpm --filter @rjpos/domain-types build
       - run: pnpm --filter @rjpos/database db:seed
       - run: pnpm typecheck
       - run: pnpm lint
