@@ -6,6 +6,7 @@ import type { Response } from 'express';
 import {
   addAlternateBarcode, applyBulkOperation, cancelHeldTransaction, cancelVendorClaim, commitCsvImport, createSalesChannel, createVendorClaim, exportCsv, expireStaleHeldTransactions, listAuditView, listSalesChannels, listVendorClaims,
   previewBulkOperation, previewCsvImport, PosError, recordVendorCredit, revokeEmployeeSessions, rejectVendorClaim, removeAlternateBarcode, setVendorCaseUpc, submitVendorClaim, updateSalesChannel, velocitySuggestions,
+  activePromoAssets, deletePromoAsset, listPromoAssets, savePromoAsset, type PromoInput,
   CSV_KINDS, type AdminActor, type CsvKind,
 } from '@rjpos/database';
 import { PRISMA } from './core-pos.js';
@@ -44,6 +45,19 @@ export class PhaseNineController {
   async addChannel(@Req() request: TenantRequest, @Body() body: Parameters<typeof createSalesChannel>[2]) { return createSalesChannel(this.prisma, await this.actor(request, 'settings:write'), body); }
   @Patch('admin/sales-channels/:id')
   async editChannel(@Req() request: TenantRequest, @Param('id') id: string, @Body() body: Parameters<typeof updateSalesChannel>[3]) { return updateSalesChannel(this.prisma, await this.actor(request, 'settings:write'), id, body); }
+
+  // Customer display promotions ----------------------------------------------------------------------------------------
+  /** Register-facing: active promotions the register forwards to the customer display. */
+  @Get('customer-display/promotions')
+  async displayPromotions(@Req() request: TenantRequest) { return activePromoAssets(this.prisma, (await this.actor(request, 'sale:create')).organizationId); }
+  @Get('admin/promo-assets')
+  async promoList(@Req() request: TenantRequest) { return listPromoAssets(this.prisma, await this.actor(request, 'settings:write')); }
+  @Post('admin/promo-assets')
+  async promoAdd(@Req() request: TenantRequest, @Body() body: PromoInput) { return savePromoAsset(this.prisma, await this.actor(request, 'settings:write'), null, body); }
+  @Patch('admin/promo-assets/:id')
+  async promoEdit(@Req() request: TenantRequest, @Param('id') id: string, @Body() body: Partial<PromoInput>) { return savePromoAsset(this.prisma, await this.actor(request, 'settings:write'), id, body); }
+  @Post('admin/promo-assets/:id/delete')
+  async promoDelete(@Req() request: TenantRequest, @Param('id') id: string) { return deletePromoAsset(this.prisma, await this.actor(request, 'settings:write'), id); }
 
   // Held sales ---------------------------------------------------------------------------------------------------------
   /** Manager cleanup of stale held sales for the store (also runs lazily whenever the list is opened). */

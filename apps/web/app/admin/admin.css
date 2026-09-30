@@ -28,3 +28,5 @@
 .admin-heading>div>a:first-child{display:inline-block;margin-bottom:6px;color:var(--muted);font-size:13px;font-weight:700;text-decoration:none}.admin-heading>div>a:first-child:hover{color:var(--green)}
 .admin-heading h1{margin:2px 0 0}
 .costing-page{padding-top:22px}
+
+.promo-thumb{width:96px;height:54px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}.promo-preview{max-width:320px;border-radius:12px;border:1px solid var(--line)}.narrow{width:70px}.hdr-link{color:var(--green);font-weight:700}.pill.ok{background:#dcebe3;color:#14523a}
