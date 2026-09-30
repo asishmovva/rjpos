@@ -36,6 +36,18 @@ describe('Phase 1 API role permissions', () => {
   });
 });
 
+describe('Phase 8 cash and day-close authorization', () => {
+  it('limits cashiers to paid in and safe drops; paid out, adjustments, no-sale, and day close need a manager', () => {
+    const cashier = contextFromDevelopmentHeaders(request('CASHIER')).permissions;
+    expect(cashier.has('cash:paid-in')).toBe(true); expect(cashier.has('cash:safe-drop')).toBe(true);
+    for (const permission of ['cash:paid-out', 'cash:adjust', 'drawer:open', 'dayclose:manage', 'report:read']) expect(cashier.has(permission)).toBe(false);
+    for (const role of ['MANAGER', 'OWNER']) {
+      const permissions = contextFromDevelopmentHeaders(request(role)).permissions;
+      for (const permission of ['cash:paid-in', 'cash:safe-drop', 'cash:paid-out', 'cash:adjust', 'drawer:open', 'dayclose:manage']) expect(permissions.has(permission)).toBe(true);
+    }
+  });
+});
+
 describe('Phase 2 back-office authorization', () => {
   it('gives Owner the complete administrative boundary and keeps settings/store management Owner-only', () => {
     expect(rolePermissions.OWNER).toEqual(expect.arrayContaining(['catalog:manage', 'price:manage', 'inventory:adjust', 'employee:manage', 'store:manage', 'register:manage', 'order:refund', 'audit:read', 'dashboard:read', 'settings:write']));

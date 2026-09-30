@@ -11,6 +11,7 @@ export type ShiftReport = {
   detail?: {
     transactionCount: number; sales: { cashMinor: string; cardMinor: string; giftCardMinor: string; loyaltyMinor: string };
     refunds: { count: number; totalMinor: string }; voids: { count: number; totalMinor: string }; discountsMinor: string;
+    cash: { openingMinor: string; cashSalesMinor: string; cashRefundsMinor: string; paidInMinor: string; paidOutMinor: string; safeDropsMinor: string; adjustmentsNetMinor: string; drawerOpens: number; expectedMinor: string };
     channels: Array<{ channel: string; orderCount: number; totalMinor: string }>;
   };
 };
@@ -136,6 +137,9 @@ export function ShiftReportView({ report }: { report: ShiftReport }): React.Reac
     {row('Opening cash', report.openingCashMinor)}{row('Expected cash', report.expectedCashMinor)}{row('Counted cash', report.countedCashMinor)}
     <div className="receipt-line grand"><span>Difference</span><b>{report.differenceMinor === null ? '—' : `${BigInt(report.differenceMinor) > 0n ? '+' : ''}${money(report.differenceMinor)}`}</b></div>
     {detail && <section aria-label="Detailed shift report">
+      <hr /><h3>Drawer cash</h3>
+      {row('Opening cash', detail.cash.openingMinor)}{row('Cash sales', detail.cash.cashSalesMinor)}{row('Cash refunds', detail.cash.cashRefundsMinor)}{row('Paid in', detail.cash.paidInMinor)}{row('Paid out', detail.cash.paidOutMinor)}{row('Safe drops', detail.cash.safeDropsMinor)}{row('Adjustments (net)', detail.cash.adjustmentsNetMinor)}
+      <div className="receipt-line"><span>Drawer opens (no sale)</span><b>{detail.cash.drawerOpens}</b></div>
       <hr /><h3>Sales by tender</h3>
       {row('Cash sales', detail.sales.cashMinor)}{row('Card sales', detail.sales.cardMinor)}{row('Gift card', detail.sales.giftCardMinor)}{row('Loyalty', detail.sales.loyaltyMinor)}
       <div className="receipt-line"><span>Transactions</span><b>{detail.transactionCount}</b></div>
@@ -263,4 +267,33 @@ export function SaleCompleteDialog({ summary, onDone, onReceipt }: { summary: Sa
     <button className="primary done" autoFocus onClick={onDone}>DONE / NEXT SALE</button>
     <button className="quiet" onClick={onReceipt}>View receipt</button>
   </section>;
+}
+
+export type CashKind = 'PAID_IN' | 'PAID_OUT' | 'SAFE_DROP' | 'ADJUSTMENT_IN' | 'ADJUSTMENT_OUT';
+const CASH_OPTIONS: Array<{ kind: CashKind; label: string; reasonRequired: boolean; needsApproval: boolean }> = [
+  { kind: 'PAID_IN', label: 'Paid in', reasonRequired: false, needsApproval: false },
+  { kind: 'SAFE_DROP', label: 'Safe drop', reasonRequired: false, needsApproval: false },
+  { kind: 'PAID_OUT', label: 'Paid out', reasonRequired: true, needsApproval: true },
+  { kind: 'ADJUSTMENT_IN', label: 'Adjust +', reasonRequired: true, needsApproval: true },
+  { kind: 'ADJUSTMENT_OUT', label: 'Adjust −', reasonRequired: true, needsApproval: true },
+];
+export const cashKindNeedsApproval = (kind: CashKind): boolean => CASH_OPTIONS.find((option) => option.kind === kind)?.needsApproval ?? true;
+
+/** Drawer cash operations. Paid in and safe drops are open to cashiers; paid out, adjustments, and no-sale need a manager. */
+export function CashOperationsDialog({ isManager, onSubmit, onNoSale }: { isManager: boolean; onSubmit: (kind: CashKind, amountMinor: bigint, reason: string) => void; onNoSale: () => void }): React.ReactNode {
+  const [kind, setKind] = useState<CashKind>('PAID_IN'); const [amount, setAmount] = useState(''); const [reason, setReason] = useState('');
+  const option = CASH_OPTIONS.find((candidate) => candidate.kind === kind)!;
+  const minor = parseDollarsToMinor(amount);
+  const valid = minor !== null && minor > 0n && (!option.reasonRequired || reason.trim().length > 0);
+  return <>
+    <h2>Cash &amp; drawer</h2>
+    <div className="mode-tabs" role="tablist" aria-label="Cash operation">{CASH_OPTIONS.map((candidate) => <button type="button" role="tab" key={candidate.kind} aria-selected={kind === candidate.kind} className={kind === candidate.kind ? 'active' : ''} onClick={() => setKind(candidate.kind)}>{candidate.label}</button>)}</div>
+    {option.needsApproval && !isManager && <p className="hint">A manager approves this when you submit.</p>}
+    <form onSubmit={(event) => { event.preventDefault(); if (valid && minor !== null) onSubmit(kind, minor, reason.trim()); }}>
+      <label>Amount ($)<input aria-label="Cash amount" inputMode="decimal" autoFocus value={amount} onChange={(event) => setAmount(event.target.value.replace(/[^\d.$]/g, ''))} placeholder="0.00" /></label>
+      <label>Reason{option.reasonRequired ? ' (required)' : ' (optional)'}<input aria-label="Cash reason" value={reason} maxLength={200} onChange={(event) => setReason(event.target.value)} /></label>
+      <button className="primary" disabled={!valid}>Record {option.label.toLowerCase()}</button>
+    </form>
+    <button className="quiet" onClick={onNoSale}>No-sale drawer open…</button>
+  </>;
 }

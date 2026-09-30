@@ -545,7 +545,8 @@ export async function transitionPurchaseOrder(prisma: PrismaClient, actor: Purch
   });
 }
 
-type ReceiptLineInput = { purchaseOrderLineId: string; deliveredQuantity: number; damagedQuantity?: number; rejectedQuantity?: number; unitCostMinor?: string };
+type ReceiptLineInput = { purchaseOrderLineId: string; deliveredQuantity: number; damagedQuantity?: number; rejectedQuantity?: number; unitCostMinor?: string;
+  /** Units invoiced or ordered but not delivered; recorded in cost history only. */ shortQuantity?: number };
 
 export async function receivePurchaseOrder(prisma: PrismaClient, actor: PurchasingActor, purchaseOrderId: string, input: {
   idempotencyKey: string; vendorReferenceNumber?: string; notes?: string; lines: ReceiptLineInput[]; invoiceDocumentId?: string;
@@ -620,7 +621,7 @@ export async function receivePurchaseOrder(prisma: PrismaClient, actor: Purchasi
         await recordCostHistory(tx, { organizationId: actor.organizationId, storeId: order.storeId, variantId: orderLine.variantId, vendorId: purchaseOrder.vendorId, purchaseOrderId,
           source: input.invoiceDocumentId ? 'INVOICE_CONFIRMED' : 'PURCHASE_RECEIPT', ...(input.invoiceDocumentId ? { invoiceDocumentId: input.invoiceDocumentId } : {}), cost: breakdown, casesOrdered: Math.floor(orderLine.orderedQuantity / unitsPerCase) || null,
           casesReceived: line.deliveredQuantity % unitsPerCase === 0 ? line.deliveredQuantity / unitsPerCase : null, unitsReceived: line.deliveredQuantity,
-          unitsDamaged: line.damagedQuantity ?? 0, unitsRejected: line.rejectedQuantity ?? 0, createdByEmployeeId: receiver.id, notes: `Receipt ${receipt.id}` });
+          unitsDamaged: line.damagedQuantity ?? 0, unitsRejected: line.rejectedQuantity ?? 0, unitsShort: Math.max(0, Math.trunc(line.shortQuantity ?? 0)), createdByEmployeeId: receiver.id, notes: `Receipt ${receipt.id}` });
       }
       if (accepted > 0) {
         const level = await tx.inventoryLevel.upsert({

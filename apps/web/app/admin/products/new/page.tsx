@@ -31,6 +31,9 @@ export default function NewProductPage(): React.ReactNode {
   const [sizeLabel, setSizeLabel] = useState(''); const [sku, setSku] = useState(''); const [taxProfileId, setTaxProfileId] = useState(''); const [ageRestricted, setAgeRestricted] = useState(true);
   const [vendorId, setVendorId] = useState(''); const [vendorSku, setVendorSku] = useState(''); const [caseCost, setCaseCost] = useState(''); const [unitsPerCase, setUnitsPerCase] = useState('12');
   const [discount, setDiscount] = useState(''); const [rebate, setRebate] = useState('');
+  const [caseUpc, setCaseUpc] = useState(''); const [moqCases, setMoqCases] = useState('1'); const [preferred, setPreferred] = useState(true);
+  const [customName, setCustomName] = useState(''); const [customUnits, setCustomUnits] = useState('');
+  const [lowStock, setLowStock] = useState(''); const [reorderTarget, setReorderTarget] = useState('');
   const [units, setUnits] = useState<Unit[]>([{ key: 1, name: 'Single', unitsPerPack: 1, upc: '', sku: '', price: '', touched: false }]);
   const [mode, setMode] = useState<PricingMode>('MARKUP'); const [pct, setPct] = useState('');
   const [specials, setSpecials] = useState<Special[]>([]); const [opening, setOpening] = useState('');
@@ -83,14 +86,19 @@ export default function NewProductPage(): React.ReactNode {
     if (!draft && unitPayload.some(({ minor }) => minor === null)) return 'Enter a retail price for every selling unit.';
     const opening_ = opening ? Number(opening) : 0;
     if (!Number.isSafeInteger(opening_) || opening_ < 0) return 'Opening inventory must be a whole number.';
+    const low = lowStock ? Number(lowStock) : 0; const target = reorderTarget ? Number(reorderTarget) : low;
+    if (!Number.isSafeInteger(low) || !Number.isSafeInteger(target) || target < low) return 'Reorder target must be at least the low-stock threshold.';
+    const moq = Number(moqCases || '1');
+    if (!Number.isSafeInteger(moq) || moq < 1) return 'Minimum order must be at least 1 case.';
     return {
       storeId, draft, product: { name: name.trim(), categoryId, brand: brand.trim(), ageRestricted, ...(taxProfileId ? { taxProfileId } : {}) },
       identity: { upc: scanUpc.trim(), sizeLabel: sizeLabel.trim(), ...(sku.trim() ? { sku: sku.trim() } : {}) },
       ...(vendorId && cost ? { vendor: { vendorId, ...(vendorSku.trim() ? { vendorSku: vendorSku.trim() } : {}), caseCostMinor: cost.baseCaseCostMinor.toString(), unitsPerCase: cost.unitsPerCase,
-        discountPerCaseMinor: cost.discountPerCaseMinor.toString(), rebatePerCaseMinor: cost.rebatePerCaseMinor.toString() } } : {}),
+        discountPerCaseMinor: cost.discountPerCaseMinor.toString(), rebatePerCaseMinor: cost.rebatePerCaseMinor.toString(),
+        ...(caseUpc.trim() ? { caseUpc: caseUpc.trim() } : {}), minimumOrderQuantity: moq * cost.unitsPerCase, preferred } } : {}),
       sellingUnits: unitPayload.map(({ unit, minor }) => ({ name: unit.name, unitsPerPack: unit.unitsPerPack, ...(unit.sku.trim() ? { sku: unit.sku.trim() } : {}), ...(unit.upc.trim() && unit.unitsPerPack !== 1 ? { upc: unit.upc.trim() } : {}), ...(minor === null ? {} : { priceMinor: minor.toString() }) })),
       specialPrices: specials.flatMap((special) => { const minor = parseDollarsToMinor(special.price); return special.priceBookId && minor !== null ? [{ priceBookId: special.priceBookId, unitIndex: special.unitIndex, amountMinor: minor.toString() }] : []; }),
-      ...(opening_ > 0 ? { inventory: { openingQuantity: opening_ } } : {}),
+      ...(opening_ > 0 || low > 0 || target > 0 ? { inventory: { openingQuantity: opening_, lowStockThreshold: low, reorderTarget: target } } : {}),
     };
   };
   async function save(): Promise<void> {
@@ -141,6 +149,9 @@ export default function NewProductPage(): React.ReactNode {
         <label>Bottles / units per case<input aria-label="Units per case" inputMode="numeric" value={unitsPerCase} onChange={(event) => setUnitsPerCase(event.target.value.replace(/\D/g, ''))} /></label>
         <label>Deal: $ off per case<input aria-label="Discount per case" inputMode="decimal" value={discount} onChange={(event) => setDiscount(event.target.value.replace(/[^\d.$]/g, ''))} placeholder="0.00" /></label>
         <label>Rebate / allowance per case ($)<input aria-label="Rebate per case" inputMode="decimal" value={rebate} onChange={(event) => setRebate(event.target.value.replace(/[^\d.$]/g, ''))} placeholder="0.00" /></label>
+        <label>Case UPC (optional)<input aria-label="Case UPC" inputMode="numeric" value={caseUpc} onChange={(event) => setCaseUpc(event.target.value)} /></label>
+        <label>Minimum order (cases)<input aria-label="Minimum order cases" inputMode="numeric" value={moqCases} onChange={(event) => setMoqCases(event.target.value.replace(/\D/g, ''))} /></label>
+        <label className="check"><input type="checkbox" checked={preferred} onChange={(event) => setPreferred(event.target.checked)} /> Preferred vendor for this product</label>
       </div>
       <dl className="calc" aria-label="Unit cost">
         <div><dt>Case cost</dt><dd>{cost ? money(cost.baseCaseCostMinor) : '—'}</dd></div>
@@ -153,6 +164,9 @@ export default function NewProductPage(): React.ReactNode {
       <section className="wizard-section" aria-label="Selling units"><h2>4 · Selling units</h2>
         <p className="hint">All formats sell from the same single-bottle stock: a 6-pack sale uses 6 bottles.</p>
         <div className="preset-row">{PRESETS.filter((preset) => !units.some((unit) => unit.unitsPerPack === preset.unitsPerPack)).map((preset) => <button key={preset.unitsPerPack} onClick={() => addUnit(preset)}>+ {preset.name}</button>)}</div>
+        <div className="inline-form"><label>Custom pack name<input aria-label="Custom pack name" value={customName} onChange={(event) => setCustomName(event.target.value)} placeholder="18-Pack" /></label>
+          <label>Bottles in pack<input aria-label="Custom pack bottles" inputMode="numeric" value={customUnits} onChange={(event) => setCustomUnits(event.target.value.replace(/D/g, ''))} /></label>
+          <button disabled={!customName.trim() || !(Number(customUnits) >= 2) || units.some((unit) => unit.unitsPerPack === Number(customUnits))} onClick={() => { addUnit({ name: customName.trim(), unitsPerPack: Number(customUnits) }); setCustomName(''); setCustomUnits(''); }}>Add custom pack</button></div>
         <table className="line-table"><thead><tr><th>Format</th><th>Bottles used</th><th>UPC</th><th>SKU</th></tr></thead><tbody>
           {units.map((unit) => <tr key={unit.key}><td>{unit.name}</td><td>{unit.unitsPerPack}</td>
             <td>{unit.unitsPerPack === 1 ? <span>{scanUpc.trim() || '—'}</span> : <input aria-label={`UPC ${unit.name}`} value={unit.upc} onChange={(event) => patchUnit(unit.key, { upc: event.target.value })} placeholder="optional" />}</td>
@@ -190,7 +204,11 @@ export default function NewProductPage(): React.ReactNode {
         <button onClick={() => { setSpecials((current) => [...current, { key: nextKey, priceBookId: '', unitIndex: 0, price: '' }]); setNextKey((key) => key + 1); }}>+ Add special price</button></section>
 
       <section className="wizard-section" aria-label="Inventory"><h2>7 · Inventory</h2>
-        <label className="inline-label">Opening inventory (bottles, optional)<input aria-label="Opening inventory" inputMode="numeric" value={opening} onChange={(event) => setOpening(event.target.value.replace(/\D/g, ''))} /></label>
+        <div className="grid-form">
+        <label>Opening inventory (bottles, optional)<input aria-label="Opening inventory" inputMode="numeric" value={opening} onChange={(event) => setOpening(event.target.value.replace(/\D/g, ''))} /></label>
+        <label>Low-stock threshold<input aria-label="Low-stock threshold" inputMode="numeric" value={lowStock} onChange={(event) => setLowStock(event.target.value.replace(/\D/g, ''))} /></label>
+        <label>Reorder target<input aria-label="Reorder target" inputMode="numeric" value={reorderTarget} onChange={(event) => setReorderTarget(event.target.value.replace(/\D/g, ''))} /></label>
+        </div>
         <p className="hint">Posted through the inventory ledger against the single-bottle stock.</p></section>
 
       <footer className="wizard-actions">

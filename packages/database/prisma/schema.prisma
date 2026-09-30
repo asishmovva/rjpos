@@ -64,6 +64,8 @@ enum InventoryMovementType {
   TRANSFER_OUT
   DAMAGE
   VOID_REVERSAL
+  RETURN_NON_RESELLABLE
+  VENDOR_RETURN
 }
 
 enum ReservationStatus {
@@ -292,6 +294,8 @@ model Organization {
   specialPrices          SpecialPrice[]
   vendorDeals            VendorDeal[]
   costHistory            ProductCostHistory[]
+  cashMovements          CashMovement[]
+  dayCloses              DayClose[]
 }
 
 model Store {
@@ -328,6 +332,7 @@ model Store {
   heldTransactions    HeldTransaction[]
   invoiceDocuments    InvoiceDocument[]
   specialPrices       SpecialPrice[]
+  dayCloses           DayClose[]
 
   @@unique([organizationId, id])
   @@index([organizationId, name])
@@ -692,6 +697,7 @@ model RegisterSession {
   employee           Employee              @relation("RegisterSessionOpenedBy", fields: [organizationId, employeeId], references: [organizationId, id])
   closedByEmployee   Employee?             @relation("RegisterSessionClosedBy", fields: [organizationId, closedByEmployeeId], references: [organizationId, id])
   orders             Order[]
+  cashMovements      CashMovement[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, registerId, id])
@@ -1004,6 +1010,8 @@ model RefundItem {
   quantity       Int
   amountMinor    BigInt
   returnToStock  Boolean        @default(true)
+  /// What happened to the physical item. Only RETURN_TO_STOCK makes it sellable again.
+  disposition    ReturnDisposition @default(RETURN_TO_STOCK)
   organization   Organization   @relation(fields: [organizationId], references: [id])
   refund         Refund         @relation(fields: [organizationId, refundId], references: [organizationId, id])
   orderItem      OrderItem      @relation(fields: [organizationId, orderItemId], references: [organizationId, id])
@@ -1163,6 +1171,8 @@ model VendorProductMapping {
   variantId            String         @db.Uuid
   vendorSku            String?
   vendorCostMinor      BigInt
+  /// Optional UPC printed on the vendor's case; used to recognize an existing product when scanning a case.
+  caseUpc              String?
   /// Case price the unit cost was derived from (vendorCostMinor = caseCostMinor / casePackQuantity, rounded).
   caseCostMinor        BigInt?
   casePackQuantity     Int            @default(1)
@@ -1177,6 +1187,7 @@ model VendorProductMapping {
 
   @@unique([organizationId, id])
   @@unique([organizationId, vendorId, variantId])
+  @@unique([organizationId, caseUpc])
   @@index([organizationId, variantId, active])
   @@index([organizationId, vendorId, active])
 }
@@ -1718,4 +1729,61 @@ model ProductCostHistory {
   @@unique([organizationId, id])
   @@index([organizationId, variantId, occurredAt(sort: Desc)])
   @@index([organizationId, vendorId, occurredAt(sort: Desc)])
+}
+
+enum ReturnDisposition {
+  RETURN_TO_STOCK
+  DAMAGED
+  NON_RESELLABLE
+  VENDOR_RETURN
+}
+
+enum CashMovementKind {
+  PAID_IN
+  PAID_OUT
+  SAFE_DROP
+  NO_SALE
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+}
+
+/// Every cash change to a drawer outside of sales and refunds. Append-only; expected cash is derived from these rows.
+model CashMovement {
+  id                   String           @id @default(uuid()) @db.Uuid
+  organizationId       String           @db.Uuid
+  storeId              String           @db.Uuid
+  registerId           String           @db.Uuid
+  registerSessionId    String           @db.Uuid
+  employeeId           String           @db.Uuid
+  approvedByEmployeeId String?          @db.Uuid
+  kind                 CashMovementKind
+  amountMinor          BigInt
+  reason               String?
+  createdAt            DateTime         @default(now())
+  organization         Organization     @relation(fields: [organizationId], references: [id])
+  session              RegisterSession  @relation(fields: [organizationId, registerSessionId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@index([organizationId, registerSessionId, kind])
+  @@index([organizationId, storeId, createdAt])
+}
+
+/// Store/day closeout (Z report). One per store and business date; the snapshot is immutable.
+model DayClose {
+  id                        String       @id @default(uuid()) @db.Uuid
+  organizationId            String       @db.Uuid
+  storeId                   String       @db.Uuid
+  businessDate              DateTime     @db.Date
+  timezone                  String
+  closedByEmployeeId        String       @db.Uuid
+  closedAt                  DateTime     @default(now())
+  openRegisterCount         Int          @default(0)
+  openRegistersAcknowledged Boolean      @default(false)
+  totalsJson                Json
+  organization              Organization @relation(fields: [organizationId], references: [id])
+  store                     Store        @relation(fields: [organizationId, storeId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, storeId, businessDate])
+  @@index([organizationId, storeId, businessDate(sort: Desc)])
 }

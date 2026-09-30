@@ -243,7 +243,7 @@ describe.sequential('Vendor deals, invoice review, and cost history', () => {
       expect((await prisma.inventoryLevel.findUniqueOrThrow({ where: { organizationId_storeId_variantId: { organizationId: f.organizationId, storeId: f.storeId, variantId: created.baseVariantId } } })).onHand).toBe(48);
       const history = await prisma.productCostHistory.findMany({ where: { organizationId: f.organizationId, variantId: created.baseVariantId }, orderBy: { occurredAt: 'asc' } });
       expect(history.map((row) => row.source)).toEqual(['PRODUCT_CREATED', 'INVOICE_CONFIRMED']);
-      expect(history[1]).toMatchObject({ unitsPerCase: 12, baseCaseCostMinor: 18_000n, discountPerCaseMinor: 1_000n, effectiveCaseCostMinor: 17_000n, effectiveUnitCostMinor: 1_417n, unitsReceived: 48, casesReceived: 4 });
+      expect(history[1]).toMatchObject({ unitsPerCase: 12, baseCaseCostMinor: 18_000n, discountPerCaseMinor: 1_000n, effectiveCaseCostMinor: 17_000n, effectiveUnitCostMinor: 1_417n, unitsReceived: 48, casesReceived: 4, unitsShort: 12 });
       await expect(prisma.productCostHistory.update({ where: { id: history[0]!.id }, data: { baseCaseCostMinor: 1n } })).rejects.toThrow(/append-only/);
       await expect(prisma.productCostHistory.delete({ where: { id: history[0]!.id } })).rejects.toThrow(/append-only/);
 

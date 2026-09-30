@@ -55,6 +55,9 @@ const FRIENDLY_ERRORS: Record<string, string> = {
   ELEVATION_LOCKED: 'Too many wrong PINs. Wait a minute and try again.',
   ELEVATION_EXPIRED: 'Manager approval expired. Approve again.',
   ELEVATION_INVALID: 'Manager approval is no longer valid. Approve again.',
+  INSUFFICIENT_DRAWER_CASH: 'The drawer does not have that much cash.',
+  CASH_REASON_REQUIRED: 'Enter a reason for this cash movement.',
+  REGISTER_SESSION_NOT_OPEN: 'Open the register first.',
   QUICK_KEY_POSITION_TAKEN: 'That position is already used. Leave it blank to add at the end.',
 };
 export const friendlyError = (error: unknown, fallback: string): string => {

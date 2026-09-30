@@ -7,7 +7,7 @@ import { api, adjustmentToDiscount, friendlyError, getApiSessionToken, loadStore
 import { CartLine } from './cart-line';
 import { InventoryView } from './inventory-view';
 import { LockScreen } from './register-lock';
-import { AgeCheckDialog, CustomerCreateForm, CustomerDialog, DiscountDialog, ElevationDialog, GiftCardDialog, isElevationActive, OpenRegisterDialog, SaleCompleteDialog, ShiftReportView, TenderDialog, type Elevation, type SaleSummary, type ShiftReport } from './register-dialogs';
+import { AgeCheckDialog, CashOperationsDialog, cashKindNeedsApproval, CustomerCreateForm, CustomerDialog, DiscountDialog, ElevationDialog, GiftCardDialog, isElevationActive, OpenRegisterDialog, SaleCompleteDialog, ShiftReportView, TenderDialog, type CashKind, type Elevation, type SaleSummary, type ShiftReport } from './register-dialogs';
 type CatalogItem = {
   variantId: string;
   productName: string;
@@ -42,6 +42,8 @@ type Receipt = {
     items: Array<{ orderItemId: string; quantity: number }>;
   }>;
 };
+type ReturnDisposition = 'RETURN_TO_STOCK' | 'DAMAGED' | 'NON_RESELLABLE' | 'VENDOR_RETURN';
+const DISPOSITION_LABELS: Record<ReturnDisposition, string> = { RETURN_TO_STOCK: 'Return to stock', DAMAGED: 'Damaged', NON_RESELLABLE: 'Non-resellable', VENDOR_RETURN: 'Vendor return' };
 type QuickKey = CatalogItem & { id: string; label: string; groupName: string; position: number };
 type HeldTransaction = { id: string; label: string; heldAt: string; cartJson: { lines: CartLine[]; customerId?: string; ageVerified?: boolean }; employee: { firstName: string; lastName: string }; customer: { name: string } | null };
 type CheckoutQuote = {
@@ -113,7 +115,8 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
   const [quickKeys, setQuickKeys] = useState<QuickKey[]>([]);
   const [quickGroup, setQuickGroup] = useState('All');
   const [heldTransactions, setHeldTransactions] = useState<HeldTransaction[]>([]);
-  const [utility, setUtility] = useState<'none' | 'resume' | 'discount' | 'drawer' | 'hardware' | 'return' | 'approve' | 'open' | 'customer' | 'close' | 'report' | 'age' | 'tender' | 'customerPanel' | 'gift'>('none');
+  const [utility, setUtility] = useState<'none' | 'resume' | 'discount' | 'drawer' | 'hardware' | 'return' | 'approve' | 'open' | 'customer' | 'close' | 'report' | 'age' | 'tender' | 'customerPanel' | 'gift' | 'cash'>('none');
+  const [returnDispositions, setReturnDispositions] = useState<Record<string, ReturnDisposition>>({});
   const [quickPage, setQuickPage] = useState(0);
   const [saleSummary, setSaleSummary] = useState<SaleSummary | null>(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
@@ -463,6 +466,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
       setHistory(await api('/orders'));
       setReturnOrder(null);
       setReturnQuantities({});
+      setReturnDispositions({});
       setReturnReason('');
       setUtility('return');
     } catch (error) {
@@ -487,7 +491,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
     if (!returnOrder) return;
     const items = returnOrder.items.flatMap((item) => {
       const quantity = returnQuantities[item.id] ?? 0;
-      return quantity > 0 ? [{ orderItemId: item.id, quantity, returnToStock: true }] : [];
+      return quantity > 0 ? [{ orderItemId: item.id, quantity, disposition: returnDispositions[item.id] ?? 'RETURN_TO_STOCK' }] : [];
     });
     if (!returnReason.trim() || items.length === 0) {
       setMessage('Choose at least one item and enter a return reason.');
@@ -497,7 +501,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
       await api(`/orders/${returnOrder.id}/refund`, { method: 'POST', ...withApproval(), body: JSON.stringify({ reason: returnReason, idempotencyKey: crypto.randomUUID(), items }) });
       setUtility('none');
       setReturnOrder(null);
-      setMessage('Return completed. Refund and stock movement were recorded.');
+      setMessage('Return completed. The refund and each item\u2019s disposition were recorded.');
     } catch (error) {
       setMessage(friendlyError(error, 'Return could not be completed.'));
     }
@@ -548,6 +552,13 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
       setCart(result.cart.lines); setAge(Boolean(result.cart.ageVerified)); setUtility('none'); setMessage('Held sale resumed. Prices and promotions were rechecked.');
       if (result.cart.customerId) await selectCustomer({ id: result.cart.customerId, name: '', email: null, phone: null });
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not resume sale.'); }
+  }
+  async function submitCash(kind: CashKind, amountMinor: bigint, reason: string): Promise<void> {
+    if (cashKindNeedsApproval(kind) && session.role === 'CASHIER' && !currentElevation()) { requireElevation('Approve this cash adjustment.', () => void submitCash(kind, amountMinor, reason)); return; }
+    try {
+      await api('/register/cash-movements', { method: 'POST', ...withApproval(), body: JSON.stringify({ kind, amountMinor: amountMinor.toString(), ...(reason ? { reason } : {}) }) });
+      setUtility('none'); setMessage(`${kind.replace('_', ' ').toLowerCase()} of ${money(amountMinor)} recorded.`);
+    } catch (error) { setMessage(friendlyError(error, 'Could not record the cash movement.')); }
   }
   async function manualDrawerOpen(): Promise<void> {
     const reason = overrideReason.trim();
@@ -750,7 +761,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
           <button disabled={!cart.length} className="danger" onClick={voidCart}>Void Cart</button>
           <button onClick={() => requireElevation('Approve a return.', () => void showReturns())}>Return</button>
           <button disabled={!receipt} onClick={() => void printCurrentReceipt()}>Reprint</button>
-          <button onClick={() => requireElevation('Approve opening the cash drawer.', () => setUtility('drawer'))}>Drawer</button>
+          <button onClick={() => setUtility('cash')}>Cash / Drawer</button>
           <button className={giftApplied ? 'confirmed' : ''} onClick={() => setUtility('gift')}>Gift Card</button>
           <button disabled={!sessionId && !clockedIn} className="danger" onClick={() => beginClose(true)}>End Shift</button>
         </div>
@@ -782,8 +793,9 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
           <section className="utility-modal">
             <button className="close" aria-label="Close" onClick={closeUtility}>×</button>
             {utility === 'resume' && <><h2>Resume a held sale</h2>{heldTransactions.length === 0 ? <p>No held sales on this register.</p> : heldTransactions.map((held) => <button className="held-sale" key={held.id} onClick={() => void resumeSale(held.id)}><strong>{held.label}</strong><span>{new Date(held.heldAt).toLocaleTimeString()} · {held.employee.firstName} {held.employee.lastName}</span><small>{held.cartJson.lines.length} lines{held.customer ? ` · ${held.customer.name}` : ''}</small></button>)}</>}
-            {utility === 'return' && <><h2>Return items</h2>{!returnOrder ? <>{history.filter((order) => ['COMPLETED', 'PARTIALLY_REFUNDED'].includes(order.status)).map((order) => <button className="held-sale" key={order.id} onClick={() => void selectReturnOrder(order.id)}><strong>{order.orderNumber}</strong><span>{order.status}</span><small>{money(order.totalMinor)}</small></button>)}{history.every((order) => !['COMPLETED', 'PARTIALLY_REFUNDED'].includes(order.status)) && <p>No refundable orders found.</p>}</> : <><button className="text" onClick={() => setReturnOrder(null)}>← Choose another order</button><p><strong>{returnOrder.orderNumber}</strong></p>{returnOrder.items.map((item) => { const remaining = item.quantity - refundedQuantity(returnOrder, item.id); return <label className="return-line" key={item.id}><span>{item.productNameSnapshot} · {item.variantNameSnapshot}<small>{remaining} available to return</small></span><input aria-label={`Return quantity for ${item.productNameSnapshot}`} type="number" min="0" max={remaining} disabled={remaining === 0} value={returnQuantities[item.id] ?? 0} onChange={(event) => setReturnQuantities((current) => ({ ...current, [item.id]: Math.min(remaining, Math.max(0, Number(event.target.value) || 0)) }))} /></label>; })}<label>Required reason<input aria-label="Return reason" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} /></label><button className="danger" disabled={!returnReason.trim() || !Object.values(returnQuantities).some((quantity) => quantity > 0)} onClick={() => void submitReturn()}>Confirm refund and return to stock</button></>}</>}
+            {utility === 'return' && <><h2>Return items</h2>{!returnOrder ? <>{history.filter((order) => ['COMPLETED', 'PARTIALLY_REFUNDED'].includes(order.status)).map((order) => <button className="held-sale" key={order.id} onClick={() => void selectReturnOrder(order.id)}><strong>{order.orderNumber}</strong><span>{order.status}</span><small>{money(order.totalMinor)}</small></button>)}{history.every((order) => !['COMPLETED', 'PARTIALLY_REFUNDED'].includes(order.status)) && <p>No refundable orders found.</p>}</> : <><button className="text" onClick={() => setReturnOrder(null)}>← Choose another order</button><p><strong>{returnOrder.orderNumber}</strong></p>{returnOrder.items.map((item) => { const remaining = item.quantity - refundedQuantity(returnOrder, item.id); return <label className="return-line" key={item.id}><span>{item.productNameSnapshot} · {item.variantNameSnapshot}<small>{remaining} available to return</small></span><input aria-label={`Return quantity for ${item.productNameSnapshot}`} type="number" min="0" max={remaining} disabled={remaining === 0} value={returnQuantities[item.id] ?? 0} onChange={(event) => setReturnQuantities((current) => ({ ...current, [item.id]: Math.min(remaining, Math.max(0, Number(event.target.value) || 0)) }))} /><select aria-label={`Disposition for ${item.productNameSnapshot}`} value={returnDispositions[item.id] ?? 'RETURN_TO_STOCK'} disabled={remaining === 0} onChange={(event) => setReturnDispositions((current) => ({ ...current, [item.id]: event.target.value as ReturnDisposition }))}>{(Object.keys(DISPOSITION_LABELS) as ReturnDisposition[]).map((value) => <option key={value} value={value}>{DISPOSITION_LABELS[value]}</option>)}</select></label>; })}<label>Required reason<input aria-label="Return reason" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} /></label><button className="danger" disabled={!returnReason.trim() || !Object.values(returnQuantities).some((quantity) => quantity > 0)} onClick={() => void submitReturn()}>Confirm refund</button></>}</>}
             {utility === 'approve' && <ElevationDialog reason={approveReason} onGranted={(granted) => { grantElevation(granted); const action = pendingAction.current; pendingAction.current = null; setUtility('none'); action?.(); }} />}
+            {utility === 'cash' && <CashOperationsDialog isManager={session.role !== 'CASHIER'} onSubmit={(kind, amount, reason) => void submitCash(kind, amount, reason)} onNoSale={() => requireElevation('Approve opening the cash drawer.', () => setUtility('drawer'))} />}
             {utility === 'customerPanel' && <CustomerDialog customer={customer} program={loyaltyProgram} points={loyaltyPoints} projectedEarn={loyaltyProgram?.enabled ? Math.floor(Number(total) / Number(loyaltyProgram.spendMinor)) * loyaltyProgram.pointsEarned : 0} search={customerSearch} results={customerResults} onSearch={setCustomerSearch} onFind={() => void findCustomers()} onSelect={(picked) => { setUtility('none'); void selectCustomer(picked); }} onNew={() => setUtility('customer')} onRemove={() => { setCustomer(null); setLoyaltyPoints(0); }} onPoints={setLoyaltyPoints} onClose={closeUtility} />}
             {utility === 'gift' && <GiftCardDialog code={giftCode} amountMinor={giftAmount} onApply={(code, amountMinor) => { setGiftCode(code); setGiftAmount(amountMinor); setUtility('none'); setMessage('Gift card applied. Use Split with cash or terminal for the remainder.'); }} onClear={() => { setGiftCode(''); setGiftAmount('0'); setUtility('none'); }} />}
             {utility === 'tender' && <TenderDialog dueMinor={dueNow} onSet={(amount) => { setCashTendered(amount.toString()); setUtility('none'); }} />}

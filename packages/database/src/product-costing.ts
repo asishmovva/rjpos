@@ -10,8 +10,13 @@ import { writeAudit } from './tax-profiles.js';
 /** Scan/search step of product creation: existing store product → master catalog → brand-new. Never creates anything. */
 export async function lookupUpcForCreation(prisma: PrismaClient, actor: AdminActor, rawUpc: string) {
   const upc = normalizeUpc(rawUpc);
-  const barcode = await prisma.barcode.findFirst({ where: { organizationId: actor.organizationId, barcodeValue: upc },
+  let barcode = await prisma.barcode.findFirst({ where: { organizationId: actor.organizationId, barcodeValue: upc },
     include: { variant: { include: { product: { include: { category: true } } } } } });
+  if (!barcode) {
+    // A vendor case UPC identifies the same purchased product.
+    const caseMapping = await prisma.vendorProductMapping.findFirst({ where: { organizationId: actor.organizationId, caseUpc: upc }, select: { variantId: true } });
+    if (caseMapping) barcode = await prisma.barcode.findFirst({ where: { organizationId: actor.organizationId, variantId: caseMapping.variantId }, include: { variant: { include: { product: { include: { category: true } } } } } });
+  }
   if (barcode) return { status: 'IN_STORE' as const, upc, variant: { id: barcode.variant.id, name: barcode.variant.name, sku: barcode.variant.sku, productId: barcode.variant.productId, productName: barcode.variant.product.name, brand: barcode.variant.product.brand, category: barcode.variant.product.category.name } };
   const master = await prisma.masterProduct.findUnique({ where: { upc } });
   if (master) return { status: 'MASTER_CATALOG' as const, upc, master: { id: master.id, name: master.name, brand: master.brand, category: master.category, sizeLabel: master.sizeLabel, packName: master.packName, referenceCostMinor: master.referenceCostMinor, referencePriceMinor: master.referencePriceMinor } };
@@ -25,10 +30,11 @@ export type PurchasedProductInput = {
   draft?: boolean;
   product: { name: string; categoryId: string; brand: string; description?: string; taxProfileId?: string | null; ageRestricted?: boolean; inventoryTracked?: boolean };
   identity: { upc: string; sizeLabel: string; sku?: string; size?: number; unit?: 'EACH' | 'ML' | 'LITER' };
-  vendor?: { vendorId: string; vendorSku?: string; caseCostMinor: string; unitsPerCase: number; discountPerCaseMinor?: string; rebatePerCaseMinor?: string };
+  vendor?: { vendorId: string; vendorSku?: string; caseCostMinor: string; unitsPerCase: number; discountPerCaseMinor?: string; rebatePerCaseMinor?: string;
+    /** Optional UPC printed on the vendor's case. */ caseUpc?: string; /** Minimum order in units; a whole number of cases. Defaults to one case. */ minimumOrderQuantity?: number; preferred?: boolean };
   sellingUnits: SellingUnitInput[];
   specialPrices?: Array<{ priceBookId: string; unitIndex: number; amountMinor: string; effectiveFrom?: Date | null; effectiveTo?: Date | null }>;
-  inventory?: { openingQuantity: number; reason?: string };
+  inventory?: { openingQuantity: number; reason?: string; lowStockThreshold?: number; reorderTarget?: number };
 };
 
 const priceOf = (value: string | undefined, code: string): bigint | undefined => {
@@ -86,6 +92,13 @@ export async function createPurchasedProduct(prisma: PrismaClient, actor: AdminA
   }
   const openingQuantity = input.inventory?.openingQuantity ?? 0;
   if (!Number.isSafeInteger(openingQuantity) || openingQuantity < 0) throw new PosError('INVENTORY_QUANTITY_INVALID');
+  const lowStockThreshold = input.inventory?.lowStockThreshold ?? 0;
+  const reorderTarget = input.inventory?.reorderTarget ?? lowStockThreshold;
+  if (!Number.isSafeInteger(lowStockThreshold) || lowStockThreshold < 0 || !Number.isSafeInteger(reorderTarget) || reorderTarget < lowStockThreshold) throw new PosError('REORDER_SETTINGS_INVALID');
+  const caseUpc = input.vendor?.caseUpc?.trim() ? normalizeUpc(input.vendor.caseUpc) : null;
+  if (caseUpc && (caseUpc === baseUpc || givenUpcs.includes(caseUpc))) throw new PosError('DUPLICATE_UPC_IN_REQUEST');
+  const minimumOrderQuantity = input.vendor?.minimumOrderQuantity ?? cost?.unitsPerCase ?? 1;
+  if (!Number.isSafeInteger(minimumOrderQuantity) || minimumOrderQuantity < 1 || (cost && minimumOrderQuantity % cost.unitsPerCase !== 0)) throw new PosError('MINIMUM_ORDER_INVALID');
 
   const [category, store, vendor, taxProfile, employee] = await Promise.all([
     prisma.category.findFirst({ where: { id: input.product.categoryId, organizationId: actor.organizationId, active: true } }),
@@ -101,6 +114,7 @@ export async function createPurchasedProduct(prisma: PrismaClient, actor: AdminA
   if (!employee) throw new PosError('EMPLOYEE_STORE_ACCESS_DENIED', 403);
   const existing = await prisma.barcode.findMany({ where: { organizationId: actor.organizationId, barcodeValue: { in: givenUpcs } }, include: { variant: { include: { product: true } } } });
   if (existing.length) throw new PosError('UPC_ALREADY_EXISTS', 409);
+  if (caseUpc && (await prisma.barcode.count({ where: { organizationId: actor.organizationId, barcodeValue: caseUpc } }) + await prisma.vendorProductMapping.count({ where: { organizationId: actor.organizationId, caseUpc } })) > 0) throw new PosError('UPC_ALREADY_EXISTS', 409);
   const master = await prisma.masterProduct.findUnique({ where: { upc: baseUpc }, select: { id: true } });
   const specials = input.specialPrices ?? [];
   for (const special of specials) if (!Number.isInteger(special.unitIndex) || special.unitIndex < 0 || special.unitIndex >= input.sellingUnits.length) throw new PosError('SPECIAL_PRICE_UNIT_INVALID');
@@ -120,7 +134,7 @@ export async function createPurchasedProduct(prisma: PrismaClient, actor: AdminA
         const unit = input.sellingUnits[index]!; const isBase = unit.unitsPerPack === 1;
         const variant = await tx.productVariant.create({ data: { organizationId: actor.organizationId, productId: product.id, name: isBase ? `${sizeLabel}${unit.name.trim() && unit.name.trim().toLowerCase() !== 'single' ? ` ${unit.name.trim()}` : ''}`.trim() : `${sizeLabel} ${unit.name.trim()}`.trim(), sku: skus[index]!,
           active: !draft, ...(input.identity.size === undefined ? {} : { size: new Prisma.Decimal(input.identity.size) }), unit: input.identity.unit ?? 'EACH',
-          ...(unitCost === null ? {} : { costMinor: unitCost }), ...(isBase && master ? { masterProductId: master.id } : {}),
+          ...(unitCost === null ? {} : { costMinor: unitCost }), ...(isBase && master ? { masterProductId: master.id } : {}), ...(isBase ? { lowStockThreshold } : {}),
           ...(isBase ? {} : { baseVariantId, unitsPerPack: unit.unitsPerPack }) } });
         if (isBase) baseVariantId = variant.id;
         idByIndex.set(index, variant.id);
@@ -135,17 +149,19 @@ export async function createPurchasedProduct(prisma: PrismaClient, actor: AdminA
         // Stock, cost, and the vendor mapping live on the base variant; packs are just other ways to sell it.
         const mapping = await tx.vendorProductMapping.create({ data: { organizationId: actor.organizationId, vendorId: input.vendor.vendorId, variantId: baseVariantId,
           vendorSku: input.vendor.vendorSku?.trim() || null, vendorCostMinor: unitCostFromCase(cost.baseCaseCostMinor, cost.unitsPerCase), caseCostMinor: cost.baseCaseCostMinor,
-          casePackQuantity: cost.unitsPerCase, minimumOrderQuantity: cost.unitsPerCase, preferred: true } });
+          casePackQuantity: cost.unitsPerCase, minimumOrderQuantity, preferred: input.vendor.preferred ?? true, caseUpc } });
         mappingId = mapping.id;
         await tx.storeProductCost.create({ data: { organizationId: actor.organizationId, storeId: input.storeId, variantId: baseVariantId, amountMinor: cost.effectiveUnitCostMinor } });
         await recordCostHistory(tx, { organizationId: actor.organizationId, storeId: input.storeId, variantId: baseVariantId, vendorId: input.vendor.vendorId, source: 'PRODUCT_CREATED', cost, createdByEmployeeId: actor.userId, notes: 'Initial cost at product creation' });
       }
       for (const special of specials) await saveSpecialPrice(tx, actor, { priceBookId: special.priceBookId, storeId: input.storeId, variantId: idByIndex.get(special.unitIndex)!, amountMinor: special.amountMinor, effectiveFrom: special.effectiveFrom ?? null, effectiveTo: special.effectiveTo ?? null });
-      if (product.inventoryTracked && openingQuantity > 0) {
-        const level = await tx.inventoryLevel.create({ data: { organizationId: actor.organizationId, storeId: input.storeId, variantId: baseVariantId, onHand: openingQuantity } });
+      if (product.inventoryTracked && (openingQuantity > 0 || lowStockThreshold > 0 || reorderTarget > 0)) {
+        const level = await tx.inventoryLevel.create({ data: { organizationId: actor.organizationId, storeId: input.storeId, variantId: baseVariantId, onHand: openingQuantity, lowStockThreshold, reorderTarget } });
+        if (openingQuantity > 0) {
         const movement = await tx.inventoryMovement.create({ data: { organizationId: actor.organizationId, storeId: input.storeId, variantId: baseVariantId, employeeId: actor.userId,
           quantityDelta: openingQuantity, type: 'INITIAL', referenceType: 'OPENING_BALANCE', reason: input.inventory?.reason?.trim() || 'Opening inventory at product creation', resultingOnHand: level.onHand } });
         await writeAudit(tx, actor, { action: 'INVENTORY_OPENING_BALANCE', entityType: 'InventoryMovement', entityId: movement.id, storeId: input.storeId, after: { variantId: baseVariantId, quantity: openingQuantity } });
+        }
       }
       await writeAudit(tx, actor, { action: 'PURCHASED_PRODUCT_CREATED', entityType: 'Product', entityId: product.id, storeId: input.storeId,
         after: { name, draft, upc: baseUpc, vendorId: input.vendor?.vendorId ?? null, unitsPerCase: cost?.unitsPerCase ?? null, effectiveUnitCostMinor: unitCost?.toString() ?? null, variants: created.map((variant) => variant.sku) } });

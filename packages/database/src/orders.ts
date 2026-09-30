@@ -117,6 +117,29 @@ async function restoreInventory(tx: Tx, input: {
   }
 }
 
+const RETURN_DISPOSITIONS = ['RETURN_TO_STOCK', 'DAMAGED', 'NON_RESELLABLE', 'VENDOR_RETURN'] as const;
+type ReturnDispositionInput = (typeof RETURN_DISPOSITIONS)[number];
+const DISPOSITION_MOVEMENT = { DAMAGED: 'DAMAGE', NON_RESELLABLE: 'RETURN_NON_RESELLABLE', VENDOR_RETURN: 'VENDOR_RETURN' } as const;
+
+/**
+ * Items that come back but cannot be resold. The ledger shows the return and then its explicit disposition (damaged,
+ * non-resellable, vendor return) as a +q / −q pair, so sellable on-hand never increases and the reason is recorded.
+ */
+async function recordReturnDispositions(tx: Tx, input: {
+  organizationId: string; storeId: string; employeeId: string; refundId: string;
+  lines: Array<{ variantId: string; quantity: number; disposition: Exclude<ReturnDispositionInput, 'RETURN_TO_STOCK'> }>;
+}): Promise<void> {
+  for (const line of input.lines) {
+    const variant = await tx.productVariant.findFirst({ where: { id: line.variantId, organizationId: input.organizationId }, include: { product: true } });
+    if (!variant?.product.inventoryTracked) continue;
+    const stockVariantId = variant.baseVariantId ?? variant.id;
+    const stockQuantity = line.quantity * (variant.baseVariantId ? variant.unitsPerPack : 1);
+    const base = { organizationId: input.organizationId, storeId: input.storeId, variantId: stockVariantId, employeeId: input.employeeId, referenceType: 'REFUND', referenceId: input.refundId };
+    await tx.inventoryMovement.create({ data: { ...base, quantityDelta: stockQuantity, type: 'SALE_RETURN', reason: `Returned with disposition ${line.disposition}` } });
+    await tx.inventoryMovement.create({ data: { ...base, quantityDelta: -stockQuantity, type: DISPOSITION_MOVEMENT[line.disposition], reason: `Refund ${input.refundId}: ${line.disposition.replace('_', ' ').toLowerCase()}` } });
+  }
+}
+
 async function compensateCustomerValue(tx: Tx, input: {
   organizationId: string;
   orderId: string;
@@ -229,13 +252,17 @@ export async function refundOrder(
     employeeId: string;
     reason: string;
     idempotencyKey: string;
-    items: Array<{ orderItemId: string; quantity: number; returnToStock?: boolean }>;
+    /** `disposition` says what happens to the physical item; the legacy `returnToStock: false` means NON_RESELLABLE. */
+    items: Array<{ orderItemId: string; quantity: number; returnToStock?: boolean; disposition?: ReturnDispositionInput }>;
   },
 ): Promise<{ refundId: string; orderId: string; status: string; amountMinor: string }> {
   if (!input.reason.trim()) throw new PosError('REFUND_REASON_REQUIRED');
   if (!input.idempotencyKey.trim()) throw new PosError('IDEMPOTENCY_KEY_REQUIRED');
   if (input.items.length === 0) throw new PosError('REFUND_ITEMS_REQUIRED');
-  for (const item of input.items) requirePositiveQuantity(item.quantity);
+  for (const item of input.items) {
+    requirePositiveQuantity(item.quantity);
+    if (item.disposition !== undefined && !RETURN_DISPOSITIONS.includes(item.disposition)) throw new PosError('REFUND_DISPOSITION_INVALID');
+  }
   const scope = 'REFUND_ORDER';
   const fingerprint = actionFingerprint(input);
 
@@ -267,7 +294,9 @@ export async function refundOrder(
       const amountMinor = request.quantity === remainingQty
         ? remainingMinor
         : (item.totalMinor * BigInt(request.quantity)) / BigInt(item.quantity);
-      return { item, quantity: request.quantity, amountMinor, returnToStock: request.returnToStock !== false };
+      const disposition: ReturnDispositionInput = request.disposition ?? (request.returnToStock === false ? 'NON_RESELLABLE' : 'RETURN_TO_STOCK');
+      if (!RETURN_DISPOSITIONS.includes(disposition)) throw new PosError('REFUND_DISPOSITION_INVALID');
+      return { item, quantity: request.quantity, amountMinor, disposition, returnToStock: disposition === 'RETURN_TO_STOCK' };
     });
     const amountMinor = requested.reduce((sum, item) => sum + item.amountMinor, 0n);
     const refund = await tx.refund.create({ data: { organizationId: input.organizationId, orderId: order.id,
@@ -275,7 +304,7 @@ export async function refundOrder(
       reason: input.reason, employeeId: input.employeeId } });
     await tx.refundItem.createMany({ data: requested.map((item) => ({ organizationId: input.organizationId,
       refundId: refund.id, orderItemId: item.item.id, variantId: item.item.variantId,
-      quantity: item.quantity, amountMinor: item.amountMinor, returnToStock: item.returnToStock })) });
+      quantity: item.quantity, amountMinor: item.amountMinor, returnToStock: item.returnToStock, disposition: item.disposition })) });
     let attemptId: string | undefined;
     const terminalAttempt = payment.attempts.find((attempt) => attempt.status === 'SUCCEEDED');
     const terminalCaptured = order.payments.filter((candidate) => candidate.kind === 'TERMINAL')
@@ -334,7 +363,9 @@ export async function refundOrder(
     if (prepared.attemptId) await tx.refundAttempt.update({ where: { id: prepared.attemptId }, data: { status: 'SUCCEEDED' } });
     await restoreInventory(tx, { organizationId: input.organizationId, storeId: prepared.order.storeId,
       employeeId: input.employeeId, referenceId: current.id, movementType: 'SALE_RETURN',
-      lines: prepared.requested.filter((item) => item.returnToStock).map((item) => ({ variantId: item.item.variantId, quantity: item.quantity })) });
+      lines: prepared.requested.filter((item) => item.disposition === 'RETURN_TO_STOCK').map((item) => ({ variantId: item.item.variantId, quantity: item.quantity })) });
+    await recordReturnDispositions(tx, { organizationId: input.organizationId, storeId: prepared.order.storeId, employeeId: input.employeeId, refundId: current.id,
+      lines: prepared.requested.flatMap((item) => (item.disposition === 'RETURN_TO_STOCK' ? [] : [{ variantId: item.item.variantId, quantity: item.quantity, disposition: item.disposition }])) });
     const successfulTotal = await tx.refund.aggregate({ where: { organizationId: input.organizationId,
       orderId: input.orderId, status: 'SUCCEEDED' }, _sum: { amountMinor: true } });
     const totalRefunded = (successfulTotal._sum.amountMinor ?? 0n) + current.amountMinor;

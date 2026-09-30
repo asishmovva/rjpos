@@ -361,7 +361,8 @@ export async function confirmInvoiceDocument(prisma: PrismaClient, actor: AdminA
     const poLine = order.lines.find((candidate) => candidate.variantId === line.variantId);
     if (!poLine) throw new PosError('INVOICE_PO_LINE_MISMATCH', 409);
     const deliveredQuantity = (line.casesReceived ?? line.quantity) * line.caseQuantity;
-    return deliveredQuantity > 0 ? [{ purchaseOrderLineId: poLine.id, deliveredQuantity, unitCostMinor: costs.get(line.id)!.effectiveUnitCostMinor.toString() }] : [];
+    const shortQuantity = Math.max(0, (line.quantity - (line.casesReceived ?? line.quantity)) * line.caseQuantity);
+    return deliveredQuantity > 0 ? [{ purchaseOrderLineId: poLine.id, deliveredQuantity, shortQuantity, unitCostMinor: costs.get(line.id)!.effectiveUnitCostMinor.toString() }] : [];
   });
   if (!receiptLines.length) throw new PosError('INVOICE_NOTHING_RECEIVED', 409);
   const receipt = await receivePurchaseOrder(prisma, actor, order.id, { idempotencyKey: `invoice:${id}`, invoiceDocumentId: id,
