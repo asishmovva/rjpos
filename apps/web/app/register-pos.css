@@ -198,3 +198,4 @@
 @media(max-width:1199px){.pos-right .quick-groups{display:none}.quick-group-select{display:block}.pos-right .quick-title{gap:6px}}
 @media(min-width:1000px){.action-bar{grid-template-columns:repeat(12,minmax(0,1fr));gap:4px;padding:8px}.action-bar button{padding:2px;font-size:12px;line-height:1.15;min-height:52px}}
 @media(max-width:1199px){.quick-title .pg-word{display:none}.quick-title .qa-pager button{min-width:40px;padding:0}.quick-group-select{max-width:84px}.pos-right .quick-title .text{padding:0 4px;font-size:13px}}
+.pay-buttons .pay small{display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;opacity:.85}.pay-buttons .pay.card{line-height:1.05}

@@ -128,6 +128,9 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
   const [displayEvent, setDisplayEvent] = useState<{ kind: 'processing' } | { kind: 'complete'; totalMinor: string } | null>(null);
   const [promos, setPromos] = useState<DisplayPromo[]>([]);
   const displayState = useRef<DisplayState>(emptyDisplayState());
+  // Card availability is reported by the register app (production has no provider until one is certified).
+  const [cardMode, setCardMode] = useState<'live' | 'simulated' | 'unavailable'>('simulated');
+  useEffect(() => { void window.rjpos?.hardwareStatus().then((status) => setCardMode(status.terminal === 'ready' ? 'live' : status.terminal === 'unavailable' ? 'unavailable' : 'simulated')).catch(() => undefined); }, []);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [storeTimezone, setStoreTimezone] = useState<string | undefined>(undefined);
   const ageRef = useRef(false);
@@ -791,7 +794,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
                 <div className={`change${shortBy > 0n ? ' short' : ''}`}><span>{shortBy > 0n ? 'Still due' : 'Change due'}</span><b>{money(shortBy > 0n ? shortBy : changeDue)}</b></div>
               </div>
               <div className="pay-buttons">
-                <button className="pay card" disabled={!cart.length || !sessionId} onClick={() => void checkout('terminal')}>CARD</button>
+                <button className="pay card" disabled={!cart.length || !sessionId || cardMode === 'unavailable'} onClick={() => void checkout('terminal')} title={cardMode === 'unavailable' ? 'No card payment provider is configured. Use cash.' : cardMode === 'simulated' ? 'Simulated card payment: no real charge is made.' : undefined}>CARD{cardMode !== 'live' && <small>{cardMode === 'unavailable' ? 'Unavailable' : 'Simulated'}</small>}</button>
                 <button className="pay cash" disabled={!cart.length || !sessionId || shortBy > 0n} onClick={() => void checkout('cash', cashTendered || total.toString())}>CASH</button>
               </div>
               {splitActive && (

@@ -205,7 +205,7 @@ ipcMain.handle('hardware:print-labels', async (event, document: unknown) => {
   if (!trustedSender(event)) return untrusted;
   return labelPrinter.print(document as LabelDocument);
 });
-ipcMain.handle('hardware:status', async () => ({ scanner: 'ready' as const, printer: await printer.status(), drawer: await drawer.status(), terminal: hardwareMode }));
+ipcMain.handle('hardware:status', async () => ({ scanner: 'ready' as const, printer: await printer.status(), labelPrinter: await labelPrinter.status(), drawer: await drawer.status(), terminal: hardwareMode }));
 ipcMain.handle('hardware:print-receipt', async (event, orderId: unknown, sessionToken: unknown) => {
   if (!trustedSender(event)) return untrusted;
   try { return await printer.print(await fetchReceipt(String(orderId), tokenOf(sessionToken))); }
