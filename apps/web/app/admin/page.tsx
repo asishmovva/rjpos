@@ -1,4 +1,7 @@
 'use client';
+import { ADMIN_GROUPS } from './admin-links';
+import { BrandMark } from '../brand';
+import { SupportButton } from '../support';
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { adminApi, createCatalogFlow, money, type CatalogLookupResult, type Category, type Customer, type Dashboard, type Employee, type GiftCardDetail, type InventoryRow, type LoyaltyProgram, type MasterImportSummary, type MasterProduct, type MovementRow, type OrderRow, type Product, type PurchaseOrderDetail, type PurchaseOrderRow, type PurchaseReceiptRow, type RefundRow, type ReplenishmentSuggestion, type Shift, type StockCount, type Store, type Vendor, type VendorAddress, type VendorMapping, type Transfer, type Promotion } from './admin-client';
@@ -22,7 +25,9 @@ export default function AdminPage(): React.ReactNode {
   const [area, setArea] = useState<Area>('Dashboard');
   const mainRef = useRef<HTMLElement>(null);
   // Each module starts at the top; the sidebar keeps its own scroll position.
-  useEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0; }, [area]);
+  useEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0; window.scrollTo(0, 0); }, [area]);
+  // Sub-pages link back to a section with #Section.
+  useEffect(() => { const wanted = decodeURIComponent(window.location.hash.slice(1)); if ((areas as readonly string[]).includes(wanted)) setArea(wanted as Area); }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -157,33 +162,16 @@ export default function AdminPage(): React.ReactNode {
     <main className="admin-shell">
       <aside className="admin-nav">
         <a className="admin-brand" href="/">
-          <span className="eyebrow">RJ POS</span>
+          <BrandMark size={30} />
           <strong>Back Office</strong>
         </a>
         <nav aria-label="Back-office navigation">
-          <a className="register-link" href="/admin/register-settings">Register &amp; hardware</a>
-          <a className="register-link" href="/admin/reports">Reports &amp; exports</a>
-          <a className="register-link" href="/admin/invoices/">Invoice receiving</a>
-          <a className="register-link" href="/admin/products/new/">New purchased product</a>
-          <a className="register-link" href="/admin/day-close/">End of day (Z report)</a>
-          <a className="register-link" href="/admin/taxes/">Settings · Taxes</a>
-          <a className="register-link" href="/admin/price-books/">Settings · Price books</a>
-          <a className="register-link" href="/admin/channels/">Settings · Sales channels</a>
-          <a className="register-link" href="/admin/bulk/">Bulk changes</a>
-          <a className="register-link" href="/admin/import-export/">Import &amp; export</a>
-          <a className="register-link" href="/admin/labels/">Labels</a>
-          <a className="register-link" href="/admin/claims/">Vendor claims &amp; suggestions</a>
-          <a className="register-link" href="/admin/audit/">Audit log</a>
-          <a className="register-link" href="/admin/system/">Backups</a>
-          {areas.map((item) => (
-            <button className={area === item ? 'active' : ''} key={item} onClick={() => switchArea(item)}>
-              {item}
-            </button>
-          ))}
+          {ADMIN_GROUPS.map((group) => <div className="nav-group" key={group.title}><span className="nav-heading">{group.title}</span>
+            {group.items.map((item) => item.area
+              ? <button className={area === item.area ? 'active' : ''} key={item.label} onClick={() => switchArea(item.area as Area)}>{item.label}</button>
+              : <a className="nav-link" key={item.label} href={item.href}>{item.label}</a>)}</div>)}
         </nav>
-        <a className="register-link" href="/">
-          Return to register
-        </a>
+        <div className="nav-foot"><SupportButton className="support-btn on-dark" /><a className="register-link" href="/">Return to register</a></div>
       </aside>
       <section className="admin-main" ref={mainRef}>
         <header className="admin-heading">
