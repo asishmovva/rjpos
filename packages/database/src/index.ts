@@ -141,6 +141,8 @@ export {
   cancelHeldTransaction,
   holdTransaction,
   listHeldTransactions,
+  expireStaleHeldTransactions,
+  HELD_SALE_TTL_HOURS,
   listQuickKeys,
   listQuickKeysAdmin,
   resumeHeldTransaction,
@@ -186,3 +188,12 @@ export { recordCostHistory } from './cost-history.js';
 export { loadDefaultTaxProfile, loadSpecialPrices, resolveLineTax } from './sale-pricing.js';
 export { calculateCashTotals, listCashMovements, recordCashMovement, type CashActor, type CashTotals } from './cash-operations.js';
 export { finalizeDayClose, listDayCloses, previewDayClose, todayInTimeZone, zonedMidnightUtc, type DayTotals } from './day-close.js';
+export { createSalesChannel, getChannelReport, listSalesChannels, updateSalesChannel, type ChannelReportRow } from './sales-channels.js';
+export { resolveSalesChannel } from './sale-pricing.js';
+export { velocitySuggestions, type VelocitySuggestion } from './purchasing-insights.js';
+export { cancelVendorClaim, createVendorClaim, listVendorClaims, recordVendorCredit, rejectVendorClaim, submitVendorClaim } from './vendor-claims.js';
+export { addAlternateBarcode, removeAlternateBarcode, setVendorCaseUpc } from './barcodes.js';
+export { applyBulkOperation, previewBulkOperation, type BulkChange, type BulkOperation, type BulkPlan } from './bulk-operations.js';
+export { CSV_KINDS, commitCsvImport, exportCsv, previewCsvImport, type CsvKind, type ImportPreview, type ImportRow } from './csv-tools.js';
+export { listAuditView, type AuditChange } from './audit-viewer.js';
+export { revokeEmployeeSessions } from './back-office.js';

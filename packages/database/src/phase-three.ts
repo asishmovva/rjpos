@@ -24,7 +24,7 @@ const requireText = (value: string, code: string): string => {
   return normalized;
 };
 
-const normalizeEmail = (value?: string | null): string | null => {
+export const normalizeEmail = (value?: string | null): string | null => {
   if (!value?.trim()) return null;
   const normalized = value.trim().toLowerCase();
   if (normalized.includes(' ')) throw new PosError('CUSTOMER_EMAIL_INVALID');
@@ -35,7 +35,7 @@ const normalizeEmail = (value?: string | null): string | null => {
   return normalized;
 };
 
-const normalizePhone = (value?: string | null): string | null => {
+export const normalizePhone = (value?: string | null): string | null => {
   if (!value?.trim()) return null;
   const normalized = value.trim().replaceAll(/[^\d+]/g, '');
   const startsWithPlus = normalized.startsWith('+');

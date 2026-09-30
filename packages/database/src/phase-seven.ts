@@ -73,26 +73,42 @@ export async function reorderQuickKeys(prisma: PrismaClient, actor: RegisterActo
   });
 }
 
-export async function holdTransaction(prisma: PrismaClient, actor: RegisterActor, input: { idempotencyKey: string; label?: string; cart: HeldCart }) {
+export async function holdTransaction(prisma: PrismaClient, actor: RegisterActor, input: { idempotencyKey: string; label?: string; note?: string; cart: HeldCart }) {
   if (!input.idempotencyKey.trim()) throw new PosError('IDEMPOTENCY_KEY_REQUIRED');
   if (!validCart(input.cart)) throw new PosError('HELD_CART_INVALID');
   await quoteCheckout(prisma, { organizationId: actor.organizationId, storeId: actor.storeId, lines: input.cart.lines });
   if (input.cart.customerId && !(await prisma.customer.findFirst({ where: { id: input.cart.customerId, organizationId: actor.organizationId, active: true } }))) throw new PosError('CUSTOMER_NOT_FOUND', 404);
-  const requestFingerprint = createHash('sha256').update(JSON.stringify({ label: input.label?.trim() || '', cart: input.cart })).digest('hex');
+  const requestFingerprint = createHash('sha256').update(JSON.stringify({ label: input.label?.trim() || '', note: input.note?.trim() || '', cart: input.cart })).digest('hex');
   const existing = await prisma.heldTransaction.findUnique({ where: { organizationId_idempotencyKey: { organizationId: actor.organizationId, idempotencyKey: input.idempotencyKey } } });
   if (existing) {
     if (existing.requestFingerprint !== requestFingerprint) throw new PosError('IDEMPOTENCY_KEY_REUSED', 409);
     return existing;
   }
   return prisma.$transaction(async (tx) => {
-    const held = await tx.heldTransaction.create({ data: { organizationId: actor.organizationId, storeId: actor.storeId, registerId: actor.registerId, employeeId: actor.userId, ...(input.cart.customerId ? { customerId: input.cart.customerId } : {}), label: input.label?.trim() || `Held ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`, cartJson: input.cart as unknown as Prisma.InputJsonValue, idempotencyKey: input.idempotencyKey, requestFingerprint } });
+    const held = await tx.heldTransaction.create({ data: { organizationId: actor.organizationId, storeId: actor.storeId, registerId: actor.registerId, employeeId: actor.userId, ...(input.cart.customerId ? { customerId: input.cart.customerId } : {}), note: input.note?.trim().slice(0, 200) || null, label: input.label?.trim().slice(0, 60) || `Held ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`, cartJson: input.cart as unknown as Prisma.InputJsonValue, idempotencyKey: input.idempotencyKey, requestFingerprint } });
     await tx.auditRecord.create({ data: { organizationId: actor.organizationId, userId: actor.userId, storeId: actor.storeId, registerId: actor.registerId, action: 'TRANSACTION_HELD', entityType: 'HeldTransaction', entityId: held.id, afterJson: { lineCount: input.cart.lines.length } } });
     return held;
   });
 }
 
+export const HELD_SALE_TTL_HOURS = Number(process.env.RJPOS_HELD_SALE_TTL_HOURS ?? 24);
+
+/**
+ * Stale holds (older than the TTL) are marked EXPIRED so they never resume with old prices or pile up. A hold reserves no
+ * stock and takes no payment, so expiring it is always safe. Runs whenever the held list is read and from the cleanup endpoint.
+ */
+export async function expireStaleHeldTransactions(prisma: PrismaClient, scope: { organizationId: string; storeId: string }, ttlHours = HELD_SALE_TTL_HOURS): Promise<number> {
+  const hours = Number.isFinite(ttlHours) && ttlHours > 0 ? ttlHours : 24;
+  const cutoff = new Date(Date.now() - hours * 3_600_000);
+  const result = await prisma.heldTransaction.updateMany({ where: { organizationId: scope.organizationId, storeId: scope.storeId, status: 'HELD', heldAt: { lt: cutoff } }, data: { status: 'EXPIRED', expiredAt: new Date() } });
+  if (result.count) await recordAudit(prisma, { organizationId: scope.organizationId, action: 'HELD_TRANSACTIONS_EXPIRED', entityType: 'Store', entityId: scope.storeId, afterJson: { count: result.count, ttlHours: hours } });
+  return result.count;
+}
+
 export async function listHeldTransactions(prisma: PrismaClient, actor: RegisterActor) {
-  return prisma.heldTransaction.findMany({ where: { organizationId: actor.organizationId, storeId: actor.storeId, registerId: actor.registerId, status: 'HELD' }, include: { employee: { select: { firstName: true, lastName: true } }, customer: { select: { name: true } } }, orderBy: { heldAt: 'desc' }, take: 100 });
+  await expireStaleHeldTransactions(prisma, actor);
+  const rows = await prisma.heldTransaction.findMany({ where: { organizationId: actor.organizationId, storeId: actor.storeId, registerId: actor.registerId, status: 'HELD' }, include: { employee: { select: { firstName: true, lastName: true } }, customer: { select: { name: true } }, register: { select: { name: true } } }, orderBy: { heldAt: 'desc' }, take: 100 });
+  return rows.map((row) => ({ ...row, ageVerified: Boolean((row.cartJson as { ageVerified?: boolean } | null)?.ageVerified), lineCount: ((row.cartJson as { lines?: unknown[] } | null)?.lines ?? []).length }));
 }
 
 export async function resumeHeldTransaction(prisma: PrismaClient, actor: RegisterActor, heldId: string) {
@@ -100,6 +116,7 @@ export async function resumeHeldTransaction(prisma: PrismaClient, actor: Registe
   if (!candidate) throw new PosError('HELD_TRANSACTION_NOT_FOUND', 404);
   if (!validCart(candidate.cartJson)) throw new PosError('HELD_CART_INVALID');
   if (candidate.status === 'CANCELLED') throw new PosError('HELD_TRANSACTION_CANCELLED', 409);
+  if (candidate.status === 'EXPIRED' || (candidate.status === 'HELD' && candidate.heldAt.getTime() < Date.now() - HELD_SALE_TTL_HOURS * 3_600_000)) throw new PosError('HELD_TRANSACTION_EXPIRED', 409);
   const quote = await quoteCheckout(prisma, { organizationId: actor.organizationId, storeId: actor.storeId, lines: candidate.cartJson.lines });
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "HeldTransaction" WHERE id = ${heldId}::uuid AND "organizationId" = ${actor.organizationId}::uuid FOR UPDATE`;
@@ -107,6 +124,7 @@ export async function resumeHeldTransaction(prisma: PrismaClient, actor: Registe
     if (!held) throw new PosError('HELD_TRANSACTION_NOT_FOUND', 404);
     if (!validCart(held.cartJson)) throw new PosError('HELD_CART_INVALID');
     if (held.status === 'CANCELLED') throw new PosError('HELD_TRANSACTION_CANCELLED', 409);
+    if (held.status === 'EXPIRED') throw new PosError('HELD_TRANSACTION_EXPIRED', 409);
     if (held.status === 'HELD') {
       await tx.heldTransaction.update({ where: { id: held.id }, data: { status: 'RESUMED', resumedAt: new Date(), resumedByEmployeeId: actor.userId } });
       await tx.auditRecord.create({ data: { organizationId: actor.organizationId, userId: actor.userId, storeId: actor.storeId, registerId: actor.registerId, action: 'TRANSACTION_RESUMED', entityType: 'HeldTransaction', entityId: held.id } });

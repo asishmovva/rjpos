@@ -20,7 +20,7 @@ describe('PIN login sessions', () => {
 
   it('logs in by PIN against stored hashes, audits, rate-limits repeated failures, and never returns the PIN or hash', async () => {
     const audits: unknown[] = [];
-    const prisma = { employee: { findMany: async () => [
+    const prisma = { register: { findFirst: async () => ({ id: 'register-login-test' }) }, employee: { findMany: async () => [
       { id: 'e-1', firstName: 'Casey', lastName: 'Cashier', pinHash: hashPin('1111'), roles: [{ role: { name: 'Cashier' } }] },
       { id: 'e-2', firstName: 'Riley', lastName: 'Reed', pinHash: hashPin('2222'), roles: [{ role: { name: 'Manager' } }, { role: { name: 'Cashier' } }] },
       { id: 'e-3', firstName: 'No', lastName: 'Role', pinHash: hashPin('3333'), roles: [] },

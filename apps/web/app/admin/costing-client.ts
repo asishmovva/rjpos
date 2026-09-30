@@ -47,7 +47,7 @@ export const costingApi = {
 
 export type ProductDetail = {
   product: { id: string; name: string; brand: string | null; active: boolean; draft: boolean; ageRestricted: boolean; taxProfileId: string | null; category: { name: string }; taxProfile: TaxProfile | null;
-    variants: Array<{ id: string; name: string; sku: string; active: boolean; unitsPerPack: number; baseVariantId: string | null; costMinor: string | null; baseVariant: { id: string; name: string; sku: string } | null; taxProfile: TaxProfile | null; barcodes: Array<{ barcodeValue: string }> }> };
+    variants: Array<{ id: string; name: string; sku: string; active: boolean; unitsPerPack: number; baseVariantId: string | null; costMinor: string | null; baseVariant: { id: string; name: string; sku: string } | null; taxProfile: TaxProfile | null; barcodes: Array<{ id: string; barcodeValue: string; kind: 'PRIMARY' | 'ALTERNATE' }> }> };
   prices: Array<{ id: string; variantId: string; storeId: string | null; amountMinor: string; effectiveFrom: string }>;
   specialPrices: SpecialPrice[];
   mappings: Array<{ id: string; vendorId: string; variantId: string; vendorSku: string | null; caseUpc: string | null; minimumOrderQuantity: number; vendorCostMinor: string; caseCostMinor: string | null; casePackQuantity: number; preferred: boolean; active: boolean; vendor: { id: string; name: string } }>;

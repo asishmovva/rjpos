@@ -1,8 +1,12 @@
 # Current State
 
-Updated: 2026-09-28
+Updated: 2026-09-30
 
 ## Phase
+
+Phases 0-8 are merged into `main`. **Phase 9** (final operations, channels, bulk tools and release readiness) is implemented on `phase-9` for review: held-sale notes/expiry, sales channels with channel pricing and reporting, bulk changes, CSV import/export, labels, vendor claims, velocity purchase suggestions, alternate/case UPCs, audit viewer, backup status, session revocation, production auth mode and startup guard, Electron CSP and IPC sender checks, and deployment/release documentation. See `docs/phase-9/release-checklist.md` for working features, hardware and payment status (not certified / not integrated), limitations, deployment and rollback.
+
+Earlier summary (Phases 0-7):
 
 Phases 0-6 are merged into `main`. Phase 7 adds the touch-first register, Quick Keys, held transactions, cashier utilities, hardened Electron hardware IPC/adapters, a real-terminal adapter boundary, Windows packaging, outage/recovery UX, production security controls, and tested PostgreSQL backup/restore. Phase 7 is implemented on `phase-7` for review and is not merged.
 

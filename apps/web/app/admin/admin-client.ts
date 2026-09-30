@@ -1,3 +1,4 @@
+import { adminHeaders, handleAdminAuthError } from './admin-auth';
 export const ADMIN_API = process.env.NEXT_PUBLIC_RJPOS_API_URL ?? 'http://127.0.0.1:3001/api/v1';
 
 export type PageResult<T> = {
@@ -409,12 +410,12 @@ export async function adminRequest<T>(path: string, init?: RequestInit): Promise
     ...init,
     headers: {
       'content-type': 'application/json',
-      'x-rjpos-role': 'OWNER',
+      ...adminHeaders(),
       ...init?.headers,
     },
   });
   const body = await responseBody<T>(response);
-  if (!response.ok) throw new Error(body?.error?.code ?? `HTTP_${response.status}`);
+  if (!response.ok) { handleAdminAuthError(body?.error?.code ?? ''); throw new Error(body?.error?.code ?? `HTTP_${response.status}`); }
   return body as T;
 }
 
@@ -423,12 +424,12 @@ export async function phaseThreeRequest<T>(path: string, init?: RequestInit): Pr
     ...init,
     headers: {
       'content-type': 'application/json',
-      'x-rjpos-role': 'OWNER',
+      ...adminHeaders(),
       ...init?.headers,
     },
   });
   const body = await responseBody<T>(response);
-  if (!response.ok) throw new Error(body?.error?.code ?? `HTTP_${response.status}`);
+  if (!response.ok) { handleAdminAuthError(body?.error?.code ?? ''); throw new Error(body?.error?.code ?? `HTTP_${response.status}`); }
   return body as T;
 }
 

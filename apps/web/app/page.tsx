@@ -45,7 +45,9 @@ type Receipt = {
 type ReturnDisposition = 'RETURN_TO_STOCK' | 'DAMAGED' | 'NON_RESELLABLE' | 'VENDOR_RETURN';
 const DISPOSITION_LABELS: Record<ReturnDisposition, string> = { RETURN_TO_STOCK: 'Return to stock', DAMAGED: 'Damaged', NON_RESELLABLE: 'Non-resellable', VENDOR_RETURN: 'Vendor return' };
 type QuickKey = CatalogItem & { id: string; label: string; groupName: string; position: number };
-type HeldTransaction = { id: string; label: string; heldAt: string; cartJson: { lines: CartLine[]; customerId?: string; ageVerified?: boolean }; employee: { firstName: string; lastName: string }; customer: { name: string } | null };
+type HeldTransaction = { id: string; label: string; note: string | null; heldAt: string; ageVerified: boolean; lineCount: number; cartJson: { lines: CartLine[]; customerId?: string; ageVerified?: boolean }; employee: { firstName: string; lastName: string }; customer: { name: string } | null; register?: { name: string } | null };
+type SalesChannel = { id: string; name: string; isDefault: boolean };
+const heldAge = (heldAt: string): string => { const minutes = Math.max(0, Math.round((Date.now() - new Date(heldAt).getTime()) / 60_000)); return minutes < 1 ? 'just now' : minutes < 60 ? `${minutes} min ago` : `${Math.floor(minutes / 60)} h ${minutes % 60} min ago`; };
 type CheckoutQuote = {
   subtotalMinor: string;
   discountMinor: string;
@@ -115,7 +117,8 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
   const [quickKeys, setQuickKeys] = useState<QuickKey[]>([]);
   const [quickGroup, setQuickGroup] = useState('All');
   const [heldTransactions, setHeldTransactions] = useState<HeldTransaction[]>([]);
-  const [utility, setUtility] = useState<'none' | 'resume' | 'discount' | 'drawer' | 'hardware' | 'return' | 'approve' | 'open' | 'customer' | 'close' | 'report' | 'age' | 'tender' | 'customerPanel' | 'gift' | 'cash'>('none');
+  const [utility, setUtility] = useState<'none' | 'resume' | 'discount' | 'drawer' | 'hardware' | 'return' | 'approve' | 'open' | 'customer' | 'close' | 'report' | 'age' | 'tender' | 'customerPanel' | 'gift' | 'cash' | 'hold'>('none');
+  const [channels, setChannels] = useState<SalesChannel[]>([]); const [channelId, setChannelId] = useState(''); const [holdLabel, setHoldLabel] = useState(''); const [holdNote, setHoldNote] = useState('');
   const [returnDispositions, setReturnDispositions] = useState<Record<string, ReturnDisposition>>({});
   const [quickPage, setQuickPage] = useState(0);
   const [saleSummary, setSaleSummary] = useState<SaleSummary | null>(null);
@@ -189,6 +192,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
       }
       if (storeResult.status === 'fulfilled') { setTaxRate(storeResult.value.taxRateBasisPoints); if (storeResult.value.name) setStoreName(storeResult.value.name); if (storeResult.value.timezone) setStoreTimezone(storeResult.value.timezone); }
       if (keysResult.status === 'fulfilled' && Array.isArray(keysResult.value)) setQuickKeys(keysResult.value);
+      void api<SalesChannel[]>('/sales-channels').then((list) => { if (Array.isArray(list)) { setChannels(list); setChannelId(list.find((channel) => channel.isDefault)?.id ?? ''); } }).catch(() => undefined);
       setOnline([shiftResult, sessionResult, storeResult].some((result) => result.status === 'fulfilled'));
     })();
   }, []);
@@ -203,7 +207,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
     const timer = window.setTimeout(() => {
       void api<CheckoutQuote>('/checkout/quote', {
         method: 'POST',
-        body: JSON.stringify({ lines: adjustments.lines, ...(adjustments.orderDiscount ? { orderDiscount: adjustments.orderDiscount } : {}) }),
+        body: JSON.stringify({ lines: adjustments.lines, ...(adjustments.orderDiscount ? { orderDiscount: adjustments.orderDiscount } : {}), ...(channelId ? { channelId } : {}) }),
       })
         .then((result) => {
           if (active) setQuote(isCheckoutQuote(result) ? result : null);
@@ -219,7 +223,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
       active = false;
       window.clearTimeout(timer);
     };
-  }, [adjustments]);
+  }, [adjustments, channelId]);
 
   const addItem = useCallback((item: CatalogItem) => {
     if (!item.active) {
@@ -350,6 +354,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
           lines: adjustments.lines,
           ...(adjustments.orderDiscount ? { orderDiscount: adjustments.orderDiscount } : {}),
           ageVerified: ageRef.current,
+          ...(channelId ? { channelId } : {}),
           ...(customer ? { customerId: customer.id } : {}),
           ...(kind === 'cash' ? { tenderedMinor: tendered } : { simulatedOutcome: 'APPROVED' }),
         }),
@@ -420,6 +425,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
           lines: adjustments.lines,
           ...(adjustments.orderDiscount ? { orderDiscount: adjustments.orderDiscount } : {}),
           ageVerified: ageRef.current,
+          ...(channelId ? { channelId } : {}),
           ...(customer ? { customerId: customer.id } : {}),
           ...(giftCode && amount > 0n
             ? {
@@ -535,12 +541,19 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
     setCart([]); setCustomer(null); setAge(false); clearAdjustments(); setOverrideReason(''); setCashTendered('');
     setMessage('Current cart cleared. No sale was recorded.');
   }
-  async function holdSale(): Promise<void> {
+  function holdSale(): void {
     if (!cart.length) { setMessage('Add an item before holding this sale.'); return; }
+    setHoldLabel(customer?.name ?? ''); setHoldNote(''); setUtility('hold');
+  }
+  async function confirmHold(): Promise<void> {
     try {
-      await api('/held-transactions', { method: 'POST', body: JSON.stringify({ idempotencyKey: crypto.randomUUID(), label: customer?.name || `Cart · ${cart.length} item${cart.length === 1 ? '' : 's'}`, cart: { lines: cart, ...(customer ? { customerId: customer.id } : {}), ageVerified } }) });
-      setCart([]); setCustomer(null); setAge(false); clearAdjustments(); setMessage('Sale held. You can resume it from this register.');
-    } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not hold sale.'); }
+      await api('/held-transactions', { method: 'POST', body: JSON.stringify({ idempotencyKey: crypto.randomUUID(), label: holdLabel.trim() || customer?.name || `Cart · ${cart.length} item${cart.length === 1 ? '' : 's'}`, ...(holdNote.trim() ? { note: holdNote.trim() } : {}), cart: { lines: cart, ...(customer ? { customerId: customer.id } : {}), ageVerified } }) });
+      setCart([]); setCustomer(null); setAge(false); clearAdjustments(); setUtility('none'); setMessage('Sale held. You can resume it from this register.');
+    } catch (error) { setUtility('none'); setMessage(error instanceof Error ? error.message : 'Could not hold sale.'); }
+  }
+  async function cancelHeld(id: string): Promise<void> {
+    try { await api(`/held-transactions/${id}/cancel`, { method: 'POST', body: '{}' }); setHeldTransactions((rows) => rows.filter((row) => row.id !== id)); setMessage('Held sale cancelled. No sale was recorded.'); }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'Could not cancel held sale.'); }
   }
   async function showHeld(): Promise<void> {
     try { setHeldTransactions(await api('/held-transactions')); setUtility('resume'); }
@@ -671,6 +684,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
             <div className="cart-head">
               <h2>Current sale <small>{cart.reduce((sum, line) => sum + line.quantity, 0)} items</small></h2>
               {restricted && <button className={`age-banner${ageVerified ? ' ok' : ''}`} onClick={() => setUtility('age')}>{ageVerified ? '✓ Age verified' : '21+ items · check age'}</button>}
+              {channels.length > 1 && <select className="channel-select" aria-label="Sales channel" value={channelId} onChange={(event) => setChannelId(event.target.value)}>{channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}</select>}
               <button className="text" onClick={() => { setCart([]); clearAdjustments(); setCashTendered(''); }}>Clear cart</button>
             </div>
             <div className="cart">
@@ -756,7 +770,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
           <button className={priceCheckMode ? 'confirmed' : ''} onClick={() => { setPriceCheckMode(true); scanInput.current?.focus(); setMessage('Price-check mode: scan or select an item. It will not be added to the cart.'); }}>Price Check</button>
           <button className={customer ? 'confirmed' : ''} onClick={() => setUtility('customerPanel')}>Customer</button>
           <button className={ageVerified ? 'confirmed' : ''} onClick={() => setUtility('age')}>Age Check</button>
-          <button disabled={!cart.length} onClick={() => void holdSale()}>Hold</button>
+          <button disabled={!cart.length} onClick={() => holdSale()}>Hold</button>
           <button onClick={() => void showHeld()}>Resume</button>
           <button disabled={!cart.length} className="danger" onClick={voidCart}>Void Cart</button>
           <button onClick={() => requireElevation('Approve a return.', () => void showReturns())}>Return</button>
@@ -792,7 +806,13 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
         <div className="modal" role="dialog" aria-label={`${utility} utility`}>
           <section className="utility-modal">
             <button className="close" aria-label="Close" onClick={closeUtility}>×</button>
-            {utility === 'resume' && <><h2>Resume a held sale</h2>{heldTransactions.length === 0 ? <p>No held sales on this register.</p> : heldTransactions.map((held) => <button className="held-sale" key={held.id} onClick={() => void resumeSale(held.id)}><strong>{held.label}</strong><span>{new Date(held.heldAt).toLocaleTimeString()} · {held.employee.firstName} {held.employee.lastName}</span><small>{held.cartJson.lines.length} lines{held.customer ? ` · ${held.customer.name}` : ''}</small></button>)}</>}
+            {utility === 'resume' && <><h2>Held sales</h2>{heldTransactions.length === 0 ? <p>No held sales on this register.</p> : heldTransactions.map((held) => <div className="held-row" key={held.id}>
+              <button className="held-sale" onClick={() => void resumeSale(held.id)}><strong>{held.label}</strong><span>{heldAge(held.heldAt)} · {held.employee.firstName} {held.employee.lastName}{held.register?.name ? ` · ${held.register.name}` : ''}</span><small>{held.lineCount} line{held.lineCount === 1 ? '' : 's'}{held.customer ? ` · ${held.customer.name}` : ''}{held.ageVerified ? ' · age verified' : ''}{held.note ? ` · ${held.note}` : ''}</small></button>
+              <button className="text" aria-label={`Cancel held sale ${held.label}`} onClick={() => void cancelHeld(held.id)}>Cancel</button></div>)}</>}
+            {utility === 'hold' && <><h2>Hold this sale</h2>
+              <label>Name or label<input aria-label="Hold name" autoFocus maxLength={60} value={holdLabel} onChange={(event) => setHoldLabel(event.target.value)} placeholder={customer?.name ?? 'e.g. Bob, blue truck'} /></label>
+              <label>Note (optional)<input aria-label="Hold note" maxLength={200} value={holdNote} onChange={(event) => setHoldNote(event.target.value)} placeholder="e.g. went to get wallet" /></label>
+              <div className="dialog-actions"><button onClick={() => setUtility('none')}>Back</button><button className="primary" onClick={() => void confirmHold()}>Hold sale</button></div></>}
             {utility === 'return' && <><h2>Return items</h2>{!returnOrder ? <>{history.filter((order) => ['COMPLETED', 'PARTIALLY_REFUNDED'].includes(order.status)).map((order) => <button className="held-sale" key={order.id} onClick={() => void selectReturnOrder(order.id)}><strong>{order.orderNumber}</strong><span>{order.status}</span><small>{money(order.totalMinor)}</small></button>)}{history.every((order) => !['COMPLETED', 'PARTIALLY_REFUNDED'].includes(order.status)) && <p>No refundable orders found.</p>}</> : <><button className="text" onClick={() => setReturnOrder(null)}>← Choose another order</button><p><strong>{returnOrder.orderNumber}</strong></p>{returnOrder.items.map((item) => { const remaining = item.quantity - refundedQuantity(returnOrder, item.id); return <label className="return-line" key={item.id}><span>{item.productNameSnapshot} · {item.variantNameSnapshot}<small>{remaining} available to return</small></span><input aria-label={`Return quantity for ${item.productNameSnapshot}`} type="number" min="0" max={remaining} disabled={remaining === 0} value={returnQuantities[item.id] ?? 0} onChange={(event) => setReturnQuantities((current) => ({ ...current, [item.id]: Math.min(remaining, Math.max(0, Number(event.target.value) || 0)) }))} /><select aria-label={`Disposition for ${item.productNameSnapshot}`} value={returnDispositions[item.id] ?? 'RETURN_TO_STOCK'} disabled={remaining === 0} onChange={(event) => setReturnDispositions((current) => ({ ...current, [item.id]: event.target.value as ReturnDisposition }))}>{(Object.keys(DISPOSITION_LABELS) as ReturnDisposition[]).map((value) => <option key={value} value={value}>{DISPOSITION_LABELS[value]}</option>)}</select></label>; })}<label>Required reason<input aria-label="Return reason" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} /></label><button className="danger" disabled={!returnReason.trim() || !Object.values(returnQuantities).some((quantity) => quantity > 0)} onClick={() => void submitReturn()}>Confirm refund</button></>}</>}
             {utility === 'approve' && <ElevationDialog reason={approveReason} onGranted={(granted) => { grantElevation(granted); const action = pendingAction.current; pendingAction.current = null; setUtility('none'); action?.(); }} />}
             {utility === 'cash' && <CashOperationsDialog isManager={session.role !== 'CASHIER'} onSubmit={(kind, amount, reason) => void submitCash(kind, amount, reason)} onNoSale={() => requireElevation('Approve opening the cash drawer.', () => setUtility('drawer'))} />}

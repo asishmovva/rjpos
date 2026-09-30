@@ -1,12 +1,13 @@
 'use client';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ADMIN_API } from '../admin-client';
+import { adminHeaders } from '../admin-auth';
 
 type QuickKey = { id: string; label: string; groupName: string; position: number; enabled: boolean; registerId: string | null; variantId: string; variant: { name: string; sku: string; product: { name: string } } };
 type CatalogItem = { variantId: string; productName: string; variantName: string; sku: string; barcode: string | null; priceMinor: string | null; active: boolean };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${ADMIN_API}${path}`, { ...init, headers: { 'content-type': 'application/json', 'x-rjpos-role': 'OWNER', ...init?.headers } });
+  const response = await fetch(`${ADMIN_API}${path}`, { ...init, headers: { 'content-type': 'application/json', ...adminHeaders(), ...init?.headers } });
   const body = await response.json() as T & { error?: { code: string } };
   if (!response.ok) throw new Error(body.error?.code ?? `HTTP_${response.status}`);
   return body;
