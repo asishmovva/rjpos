@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { priceMetrics } from '@rjpos/domain-types';
 import { parseDollarsToMinor } from '../../register-api';
-import { adminApi, money, type Store } from '../admin-client';
+import { adminApi, adminRequest, money, type Store } from '../admin-client';
+import { phaseNineApi } from '../phase9-client';
 import { costingApi, type PriceBook, type ProductDetail, type TaxProfile, type VendorDealKind } from '../costing-client';
 import '../admin.css';
 import '../costing.css';
@@ -18,6 +19,7 @@ export default function ProductDetailPage(): React.ReactNode {
   const [detail, setDetail] = useState<ProductDetail | null>(null); const [tab, setTab] = useState<Tab>('Overview'); const [error, setError] = useState(''); const [message, setMessage] = useState('');
   const [priceBooks, setPriceBooks] = useState<PriceBook[]>([]); const [stores, setStores] = useState<Store[]>([]); const [taxProfiles, setTaxProfiles] = useState<TaxProfile[]>([]);
   const [spVariant, setSpVariant] = useState(''); const [spBook, setSpBook] = useState(''); const [spStore, setSpStore] = useState(''); const [spPrice, setSpPrice] = useState(''); const [spFrom, setSpFrom] = useState(''); const [spTo, setSpTo] = useState('');
+  const [altUpc, setAltUpc] = useState<Record<string, string>>({}); const [caseUpcs, setCaseUpcs] = useState<Record<string, string>>({});
   const [dealKind, setDealKind] = useState<VendorDealKind>('DISCOUNT_PER_CASE'); const [dealName, setDealName] = useState(''); const [dealAmount, setDealAmount] = useState(''); const [dealMin, setDealMin] = useState(''); const [dealVendor, setDealVendor] = useState('');
 
   const load = useCallback(async () => {
@@ -58,9 +60,21 @@ export default function ProductDetailPage(): React.ReactNode {
       {product.draft && <p className="admin-alert error">This is an incomplete draft and is inactive.</p>}</div>}
 
     {tab === 'Vendors & Costs' && <>{table(['Vendor', 'Vendor SKU', 'Case UPC', 'Case cost', 'Units / case', 'Min order', 'Unit cost', 'Preferred'], detail.mappings.map((mapping) => [mapping.vendor.name, mapping.vendorSku ?? '—', mapping.caseUpc ?? '—', mapping.caseCostMinor ? money(mapping.caseCostMinor) : '—', mapping.casePackQuantity, mapping.minimumOrderQuantity, money(mapping.vendorCostMinor), mapping.preferred ? 'Yes' : '']), 'No vendor linked yet.')}
+      {detail.mappings.length > 0 && <section className="detail-card" aria-label="Case UPCs"><h3>Case UPCs</h3>
+        <p className="hint">The code printed on the vendor&apos;s case. It must not match any item or other case code.</p>
+        {detail.mappings.map((mapping) => <div key={mapping.id} className="inline-form"><strong>{mapping.vendor.name}</strong>
+          <input aria-label={`Case UPC for ${mapping.vendor.name}`} value={caseUpcs[mapping.id] ?? mapping.caseUpc ?? ''} onChange={(event) => setCaseUpcs((current) => ({ ...current, [mapping.id]: event.target.value.replace(/[^A-Za-z0-9._-]/g, '') }))} />
+          <button disabled={(caseUpcs[mapping.id] ?? mapping.caseUpc ?? '') === (mapping.caseUpc ?? '')} onClick={() => void act(() => adminRequest(`/vendor-mappings/${mapping.id}/case-upc`, { method: 'PATCH', body: JSON.stringify({ caseUpc: (caseUpcs[mapping.id] ?? '') || null }) }), 'Case UPC saved.')}>Save</button></div>)}</section>}
       {table(['Store', 'Current unit cost (what we actually pay)'], detail.storeCosts.map((cost) => [cost.store.name, money(cost.amountMinor)]), 'No store cost recorded.')}</>}
 
     {tab === 'Selling Variants' && table(['Format', 'SKU', 'UPC', 'Bottles used', 'Sells from', 'Active'], product.variants.map((variant) => [variant.name, variant.sku, variant.barcodes[0]?.barcodeValue ?? '—', variant.unitsPerPack, variant.baseVariant ? variant.baseVariant.name : 'Own stock (base)', variant.active ? 'Yes' : 'No']), 'No variants.')}
+
+    {tab === 'Selling Variants' && <section className="detail-card" aria-label="Alternate UPCs"><h3>Alternate UPCs</h3>
+      <p className="hint">Extra codes that ring up the same item (an old or regional package). The main UPC stays the product&apos;s identity and cannot be removed.</p>
+      {product.variants.map((variant) => <div key={variant.id} className="inline-form"><strong>{variant.name}</strong>
+        {variant.barcodes.filter((code) => code.kind === 'ALTERNATE').map((code) => <span key={code.id} className="pill">{code.barcodeValue} <button aria-label={`Remove ${code.barcodeValue}`} onClick={() => void act(() => phaseNineApi.removeBarcode(code.id), 'Alternate UPC removed.')}>×</button></span>)}
+        <input aria-label={`Add alternate UPC for ${variant.name}`} placeholder="Scan or type a UPC" value={altUpc[variant.id] ?? ''} onChange={(event) => setAltUpc((current) => ({ ...current, [variant.id]: event.target.value.replace(/[^A-Za-z0-9._-]/g, '') }))} />
+        <button disabled={(altUpc[variant.id] ?? '').length < 4} onClick={() => void act(async () => { await phaseNineApi.addBarcode(variant.id, altUpc[variant.id]!); setAltUpc((current) => ({ ...current, [variant.id]: '' })); }, 'Alternate UPC added.')}>Add UPC</button></div>)}</section>}
 
     {tab === 'Pricing' && <>{table(['Format', 'Cost', 'Standard price', 'Profit', 'Margin', 'Markup'], product.variants.map((variant) => {
       const cost = unitCostFor(variant); const price = priceOf(variant.id); const metrics = cost !== null && price !== undefined ? priceMetrics(cost, BigInt(price)) : null;

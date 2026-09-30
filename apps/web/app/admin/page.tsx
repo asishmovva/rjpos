@@ -168,6 +168,13 @@ export default function AdminPage(): React.ReactNode {
           <a className="register-link" href="/admin/day-close/">End of day (Z report)</a>
           <a className="register-link" href="/admin/taxes/">Settings · Taxes</a>
           <a className="register-link" href="/admin/price-books/">Settings · Price books</a>
+          <a className="register-link" href="/admin/channels/">Settings · Sales channels</a>
+          <a className="register-link" href="/admin/bulk/">Bulk changes</a>
+          <a className="register-link" href="/admin/import-export/">Import &amp; export</a>
+          <a className="register-link" href="/admin/labels/">Labels</a>
+          <a className="register-link" href="/admin/claims/">Vendor claims &amp; suggestions</a>
+          <a className="register-link" href="/admin/audit/">Audit log</a>
+          <a className="register-link" href="/admin/system/">Backups</a>
           {areas.map((item) => (
             <button className={area === item ? 'active' : ''} key={item} onClick={() => switchArea(item)}>
               {item}

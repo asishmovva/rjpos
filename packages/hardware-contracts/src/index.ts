@@ -6,3 +6,4 @@ export interface ReceiptPrinter { status(): Promise<HardwareState>; print(receip
 export interface CashDrawer { status(): Promise<HardwareState>; open(): Promise<HardwareResult>; }
 export interface CustomerDisplay { status(): Promise<HardwareState>; show(message: string): Promise<HardwareResult>; }
 export type HardwareStatus = { scanner: HardwareState; printer: HardwareState; drawer: HardwareState; terminal: HardwareState };
+export * from './labels.js';

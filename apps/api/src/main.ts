@@ -36,8 +36,11 @@ import { InvoiceController, INVOICE_OCR_PROVIDER } from './invoices.js';
 import { ElevationController } from './elevation.js';
 import { CostingController } from './costing.js';
 import { DayCloseController } from './operations.js';
+import { PhaseNineController } from './phase-nine.js';
+import { assertProductionConfig } from './production-config.js';
 import { LocalFixtureInvoiceOcrProvider, UnavailableInvoiceOcrProvider } from './invoice-ocr.js';
 
+assertProductionConfig();
 const environment = loadEnvironment();
 const prisma = new PrismaClient({
   datasources: { db: { url: environment.DATABASE_URL } },
@@ -52,15 +55,15 @@ const invoiceOcrProvider = process.env.NODE_ENV !== 'production' && (process.env
   : new UnavailableInvoiceOcrProvider();
 const requestWindows = new Map<string, { startedAt: number; count: number }>();
 function productionHeaders(request: Request, response: Response, next: NextFunction): void {
-  response.setHeader('x-content-type-options', 'nosniff'); response.setHeader('x-frame-options', 'DENY'); response.setHeader('referrer-policy', 'no-referrer'); response.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=()');
+  response.setHeader('content-security-policy', "default-src 'none'; frame-ancestors 'none'"); response.setHeader('cache-control', 'no-store'); response.setHeader('x-content-type-options', 'nosniff'); response.setHeader('x-frame-options', 'DENY'); response.setHeader('referrer-policy', 'no-referrer'); response.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=()');
   const key = request.ip ?? 'unknown'; const now = Date.now(); const current = requestWindows.get(key);
-  const window = !current || now - current.startedAt >= 60_000 ? { startedAt: now, count: 1 } : { ...current, count: current.count + 1 }; requestWindows.set(key, window);
+  const window = !current || now - current.startedAt >= 60_000 ? { startedAt: now, count: 1 } : { ...current, count: current.count + 1 }; requestWindows.set(key, window); if (requestWindows.size > 10_000) for (const [address, entry] of requestWindows) if (now - entry.startedAt >= 60_000) requestWindows.delete(address);
   if (window.count > 300) { response.status(429).json({ error: { code: 'RATE_LIMITED', message: 'Too many requests. Try again shortly.', requestId: request.headers['x-request-id'] } }); return; }
   next();
 }
 
 @Module({
-  controllers: [HealthController, CorePosController, BackOfficeController, PhaseThreeController, PurchasingController, PhaseFiveController, ReportingController, PhaseSevenController, InvoiceController, ElevationController, CostingController, DayCloseController],
+  controllers: [HealthController, CorePosController, BackOfficeController, PhaseThreeController, PurchasingController, PhaseFiveController, ReportingController, PhaseSevenController, InvoiceController, ElevationController, CostingController, DayCloseController, PhaseNineController],
   providers: [
     HealthService,
     TenantContextService,

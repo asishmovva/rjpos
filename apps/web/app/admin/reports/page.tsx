@@ -2,9 +2,10 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { ADMIN_API, money, type Store } from '../admin-client';
+import { adminHeaders } from '../admin-auth';
 import '../admin.css';
 
-const sections = ['sales', 'products', 'inventory', 'purchasing', 'employees', 'customers', 'gift-cards', 'promotions'] as const;
+const sections = ['sales', 'products', 'inventory', 'purchasing', 'employees', 'customers', 'gift-cards', 'promotions', 'channels'] as const;
 type Section = (typeof sections)[number];
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 type Report = { kind: Section; filters: { from: string; toExclusive: string; timezone: string; storeId: string | null }; data: Record<string, JsonValue> };
@@ -14,7 +15,7 @@ const monthAgo = () => { const value = new Date(); value.setUTCDate(value.getUTC
 const params = (from: string, to: string, storeId: string) => new URLSearchParams({ from, to, ...(storeId ? { storeId } : {}) }).toString();
 
 async function api<T>(path: string): Promise<T> {
-  const response = await fetch(`${ADMIN_API}/admin${path}`, { headers: { 'x-rjpos-role': 'OWNER' } });
+  const response = await fetch(`${ADMIN_API}/admin${path}`, { headers: adminHeaders() });
   const body = await response.json() as T & { error?: { code?: string } };
   if (!response.ok) throw new Error(body.error?.code ?? `HTTP_${response.status}`);
   return body;

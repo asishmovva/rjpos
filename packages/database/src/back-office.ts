@@ -424,7 +424,7 @@ export async function setEmployeePin(prisma: PrismaClient, actor: AdminActor, em
   if (!allowElevatedTarget && employee.roles.some(({ role }) => role.name.toUpperCase() !== 'CASHIER')) throw new PosError('PIN_RESET_REQUIRES_OWNER', 403);
   await assertPinAvailable(prisma, actor.organizationId, pin, employeeId);
   return prisma.$transaction(async (tx) => {
-    await tx.employee.update({ where: { id: employeeId }, data: { pinHash: hashPin(pin) } });
+    await tx.employee.update({ where: { id: employeeId }, data: { pinHash: hashPin(pin), sessionVersion: { increment: 1 } } });
     await audit(tx, actor, { action: 'EMPLOYEE_PIN_SET', entityType: 'Employee', entityId: employeeId, after: { hadPin: employee.pinHash !== null } });
     return { id: employeeId, hasPin: true };
   });
@@ -446,6 +446,7 @@ export async function updateEmployee(prisma: PrismaClient, actor: AdminActor, em
       ...(input.firstName === undefined ? {} : { firstName: required(input.firstName, 'EMPLOYEE_FIRST_NAME_REQUIRED') }),
       ...(input.lastName === undefined ? {} : { lastName: required(input.lastName, 'EMPLOYEE_LAST_NAME_REQUIRED') }),
       ...(input.status === undefined ? {} : { status: input.status }),
+      sessionVersion: { increment: 1 },
     } });
     await tx.employeeRole.createMany({ data: roles.map((role) => ({ organizationId: actor.organizationId, employeeId, roleId: role.id })) });
     await tx.employeeStore.createMany({ data: [...new Set(storeIds)].map((storeId) => ({ organizationId: actor.organizationId, employeeId, storeId })) });
@@ -454,6 +455,17 @@ export async function updateEmployee(prisma: PrismaClient, actor: AdminActor, em
       before: { status: current.status, roles: current.roles.map(({ role }) => role.name), storeIds: current.stores.map(({ storeId }) => storeId) },
       after: { status: employee.status, roles: roleNames, storeIds } });
     return publicEmployee(employee);
+  });
+}
+
+/** Signs an employee out everywhere: every session token issued before now stops working. */
+export async function revokeEmployeeSessions(prisma: PrismaClient, actor: AdminActor, employeeId: string) {
+  const employee = await prisma.employee.findFirst({ where: { id: employeeId, organizationId: actor.organizationId } });
+  if (!employee) throw new PosError('EMPLOYEE_NOT_FOUND', 404);
+  return prisma.$transaction(async (tx) => {
+    await tx.employee.update({ where: { id: employeeId }, data: { sessionVersion: { increment: 1 } } });
+    await audit(tx, actor, { action: 'EMPLOYEE_SESSIONS_REVOKED', entityType: 'Employee', entityId: employeeId });
+    return { id: employeeId, revoked: true as const };
   });
 }
 

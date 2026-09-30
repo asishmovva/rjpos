@@ -1,8 +1,9 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { PosError } from './pos-errors.js';
+import { getChannelReport } from './sales-channels.js';
 import type { AdminActor } from './back-office.js';
 
-export const REPORT_KINDS = ['sales', 'products', 'inventory', 'purchasing', 'employees', 'customers', 'gift-cards', 'promotions'] as const;
+export const REPORT_KINDS = ['sales', 'products', 'inventory', 'purchasing', 'employees', 'customers', 'gift-cards', 'promotions', 'channels'] as const;
 export type ReportKind = (typeof REPORT_KINDS)[number];
 export type ReportFilters = { from?: string; to?: string; storeId?: string; timezone?: string; page?: number; pageSize?: number };
 type JsonRow = Record<string, string | number | boolean | null>;
@@ -139,6 +140,15 @@ async function giftCardReport(prisma: PrismaClient, organizationId: string, filt
   return { summary: { cards: cards.length, issuedMinor: money(total('ISSUE')), reloadedMinor: money(total('RELOAD')), redeemedMinor: money(-total('REDEEM')), refundedMinor: money(total('REFUND')), outstandingLiabilityMinor: money(liability) } };
 }
 
+/** Sales by order channel (walk-in, DoorDash, phone, ...): revenue, refunds, tax, discounts, and tender mix. */
+async function channelsReport(prisma: PrismaClient, organizationId: string, filters: Awaited<ReturnType<typeof normalizeReportFilters>>) {
+  const report = await getChannelReport(prisma, { organizationId, userId: 'report', ...(filters.storeId ? { storeId: filters.storeId } : {}) }, { from: filters.from, to: filters.to, ...(filters.storeId ? { storeId: filters.storeId } : {}) });
+  const flat = (row: (typeof report.rows)[number]) => ({ channel: row.channel, orders: row.orders, grossMinor: row.grossMinor, discountsMinor: row.discountsMinor, taxMinor: row.taxMinor, revenueMinor: row.revenueMinor, refundsMinor: row.refundsMinor, netMinor: row.netMinor,
+    cashMinor: row.tenders.cashMinor, cardMinor: row.tenders.cardMinor, giftCardMinor: row.tenders.giftCardMinor, otherTenderMinor: row.tenders.otherMinor });
+  const { channel: _channel, ...totals } = flat(report.totals);
+  return { summary: totals, channels: report.rows.map(flat) };
+}
+
 async function promotionReport(prisma: PrismaClient, organizationId: string, filters: Awaited<ReturnType<typeof normalizeReportFilters>>) {
   const items = await prisma.orderItem.findMany({ where: { organizationId, promotionId: { not: null }, order: { createdAt: { gte: filters.from, lt: filters.to }, status: { in: ['COMPLETED', 'REFUNDED', 'PARTIALLY_REFUNDED'] }, ...(filters.storeId ? { storeId: filters.storeId } : {}) } }, take: MAX_ROWS });
   const grouped = new Map<string, JsonRow>();
@@ -157,6 +167,7 @@ export async function getReport(prisma: PrismaClient, actor: AdminActor, kind: R
     : kind === 'employees' ? await employeeReport(prisma, actor.organizationId, filters)
     : kind === 'customers' ? await customerReport(prisma, actor.organizationId, filters)
     : kind === 'gift-cards' ? await giftCardReport(prisma, actor.organizationId, filters)
+    : kind === 'channels' ? await channelsReport(prisma, actor.organizationId, filters)
     : await promotionReport(prisma, actor.organizationId, filters);
   return { kind, filters: { from: filters.from.toISOString(), toExclusive: filters.to.toISOString(), timezone: filters.timezone, storeId: filters.storeId ?? null }, data };
 }

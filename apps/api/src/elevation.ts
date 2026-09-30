@@ -42,6 +42,8 @@ export class ElevationController {
   async login(@Req() request: TenantRequest, @Body() body: { pin?: string }) {
     const context = this.tenants.require(request.tenantContext);
     if (!context.storeId || !context.registerId) throw new ForbiddenException();
+    const register = await this.prisma.register.findFirst({ where: { id: context.registerId, organizationId: context.organizationId, storeId: context.storeId }, select: { id: true } });
+    if (!register) throw new PosError('REGISTER_NOT_FOUND', 404);
     const lockKey = `login:${context.registerId}`;
     if (isLocked(lockKey)) throw new PosError('LOGIN_LOCKED', 429);
     if (typeof body.pin !== 'string' || !/^\d{4,8}$/.test(body.pin)) throw new PosError('LOGIN_PIN_INVALID', 401);
@@ -59,7 +61,7 @@ export class ElevationController {
     attempts.delete(lockKey);
     const expiresAt = Date.now() + SESSION_TTL_MS;
     await recordAudit(this.prisma, { organizationId: context.organizationId, action: 'LOGIN_SUCCEEDED', entityType: 'Employee', entityId: match.id, afterJson: { registerId: context.registerId, role } });
-    return { token: issueSessionToken({ org: context.organizationId, store: context.storeId, reg: context.registerId, sub: match.id, role, exp: expiresAt }), expiresAt: new Date(expiresAt).toISOString(), employee: { id: match.id, name: `${match.firstName} ${match.lastName}` }, role };
+    return { token: issueSessionToken({ org: context.organizationId, store: context.storeId, reg: context.registerId, sub: match.id, role, exp: expiresAt, sv: match.sessionVersion }), expiresAt: new Date(expiresAt).toISOString(), employee: { id: match.id, name: `${match.firstName} ${match.lastName}` }, role };
   }
 
   @Post('logout')

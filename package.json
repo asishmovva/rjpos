@@ -13,6 +13,11 @@
     "restore:database": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restore-database.ps1",
     "format": "prettier --write ."
   },
+  "pnpm": {
+    "overrides": {
+      "multer": "^2.4.0"
+    }
+  },
   "devDependencies": {
     "prettier": "^3.6.2",
     "turbo": "^2.5.6",

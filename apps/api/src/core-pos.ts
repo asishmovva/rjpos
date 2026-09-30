@@ -32,13 +32,16 @@ import {
   searchInventory,
   searchOrders,
   voidOrder,
+  PosError,
   type CheckoutContext,
 } from '@rjpos/database';
 import type { CartDiscount } from '@rjpos/domain-types';
 import { SimulatedTerminalProvider, type TerminalPaymentProvider } from '@rjpos/payment-contracts';
-import { applyElevation, contextFromSession } from './elevation-token.js';
+import { applyElevation, contextFromSession, decodeSession } from './elevation-token.js';
 import {
   contextFromDevelopmentHeaders,
+  contextFromProductionDevice,
+  productionMode,
   TenantContextService,
   type AuthenticatedTenantContext,
   type TenantRequest,
@@ -46,16 +49,40 @@ import {
 
 export const PRISMA = Symbol('PRISMA');
 export const TERMINAL_PROVIDER = Symbol('TERMINAL_PROVIDER');
+const SESSION_CHECK_TTL_MS = 5_000;
+const sessionChecks = new Map<string, { valid: boolean; until: number }>();
 
 @Injectable()
 export class DevelopmentAuthMiddleware implements NestMiddleware {
-  use(request: TenantRequest, _response: Response, next: NextFunction): void {
-    // A PIN-login session identifies the real employee; without one, the development header provider is used.
-    const session = request.header('x-rjpos-session');
-    const context = session ? contextFromSession(session) : contextFromDevelopmentHeaders(request);
-    const elevation = request.header('x-rjpos-elevation');
-    request.tenantContext = elevation ? applyElevation(context, elevation) : context;
-    next();
+  constructor(@Inject(PRISMA) private readonly prisma: PrismaClient) {}
+
+  /** Checked at most every few seconds per employee: a revoked, deactivated, or PIN-reset employee loses their session quickly. */
+  private async sessionStillValid(employeeId: string, organizationId: string, version: number | undefined): Promise<boolean> {
+    const key = `${employeeId}:${version ?? 'none'}`;
+    const cached = sessionChecks.get(key);
+    if (cached && cached.until > Date.now()) return cached.valid;
+    const employee = await this.prisma.employee.findFirst({ where: { id: employeeId, organizationId, status: 'ACTIVE' }, select: { sessionVersion: true } });
+    const valid = Boolean(employee) && employee!.sessionVersion === (version ?? 0);
+    sessionChecks.set(key, { valid, until: Date.now() + SESSION_CHECK_TTL_MS });
+    if (sessionChecks.size > 5_000) sessionChecks.clear();
+    return valid;
+  }
+
+  async use(request: TenantRequest, _response: Response, next: NextFunction): Promise<void> {
+    try {
+      // A PIN-login session identifies the real employee. The development header provider exists only outside production;
+      // in production an unauthenticated request carries the configured device binding and no permissions.
+      const session = request.header('x-rjpos-session');
+      let context: AuthenticatedTenantContext;
+      if (session) {
+        const payload = decodeSession(session);
+        if (!(await this.sessionStillValid(payload.sub, payload.org, payload.sv))) throw new PosError('SESSION_REVOKED', 401);
+        context = contextFromSession(session);
+      } else context = productionMode() ? contextFromProductionDevice(request) : contextFromDevelopmentHeaders(request);
+      const elevation = request.header('x-rjpos-elevation');
+      request.tenantContext = elevation ? applyElevation(context, elevation) : context;
+      next();
+    } catch (error) { next(error); }
   }
 }
 
@@ -70,6 +97,7 @@ type CheckoutBody = {
   customerId?: string;
   overrideReason?: string;
   priceBookId?: string;
+  channelId?: string;
 };
 
 function discountFromBody(discount: DiscountBody | undefined): CartDiscount | undefined {
@@ -167,7 +195,7 @@ export class CorePosController {
         ...(line.discount ? { discount: discountFromBody(line.discount)! } : {}) })),
       ...(body.orderDiscount ? { orderDiscount: discountFromBody(body.orderDiscount)! } : {}),
       ...(body.ageVerified === undefined ? {} : { ageVerified: body.ageVerified }),
-      ...(body.customerId ? { customerId: body.customerId } : {}), ...(body.priceBookId ? { priceBookId: body.priceBookId } : {}) };
+      ...(body.customerId ? { customerId: body.customerId } : {}), ...(body.priceBookId ? { priceBookId: body.priceBookId } : {}), ...(body.channelId ? { channelId: body.channelId } : {}) };
   }
 
   private requireDiscountAuthorization(context: AuthenticatedTenantContext, body: CheckoutBody): void {
@@ -182,12 +210,12 @@ export class CorePosController {
   }
 
   @Post('checkout/quote')
-  quote(@Req() request: TenantRequest, @Body() body: { lines: Array<{ variantId: string; quantity: number; discount?: DiscountBody }>; orderDiscount?: DiscountBody; priceBookId?: string }) {
+  quote(@Req() request: TenantRequest, @Body() body: { lines: Array<{ variantId: string; quantity: number; discount?: DiscountBody }>; orderDiscount?: DiscountBody; priceBookId?: string; channelId?: string }) {
     const context = this.context(request, 'sale:create');
     // Read-only preview: it applies no sale, so manual discounts are calculated here without authorization; checkout enforces it.
     return quoteCheckout(this.prisma, { organizationId: context.organizationId, storeId: context.storeId,
       lines: body.lines.map((line) => ({ variantId: line.variantId, quantity: line.quantity, ...(line.discount ? { discount: discountFromBody(line.discount)! } : {}) })),
-      ...(body.orderDiscount ? { orderDiscount: discountFromBody(body.orderDiscount)! } : {}), ...(body.priceBookId ? { priceBookId: body.priceBookId } : {}) });
+      ...(body.orderDiscount ? { orderDiscount: discountFromBody(body.orderDiscount)! } : {}), ...(body.priceBookId ? { priceBookId: body.priceBookId } : {}), ...(body.channelId ? { channelId: body.channelId } : {}) });
   }
 
   @Post('checkout/cash')

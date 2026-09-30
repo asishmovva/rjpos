@@ -9,7 +9,7 @@ if (process.env.NODE_ENV === 'production' && !process.env.RJPOS_ELEVATION_SECRET
 // Without a configured secret, tokens are valid only for this process lifetime (development).
 const secret = process.env.RJPOS_ELEVATION_SECRET ?? randomBytes(32).toString('hex');
 
-type TokenPayload = { typ: 'elev' | 'sess'; org: string; reg: string; sub: string; role: string; exp: number; store?: string };
+type TokenPayload = { typ: 'elev' | 'sess'; org: string; reg: string; sub: string; role: string; exp: number; store?: string; sv?: number };
 type Claims = Omit<TokenPayload, 'typ'>;
 
 const sign = (body: string) => createHmac('sha256', secret).update(body).digest('base64url');
@@ -37,7 +37,8 @@ export function applyElevation(context: AuthenticatedTenantContext, token: strin
 }
 
 /** Builds the request identity from a PIN-login session token: the real employee and their role's permissions. */
+export const decodeSession = (token: string): TokenPayload => decode(token, 'sess', 'SESSION_INVALID', 'SESSION_EXPIRED');
 export function contextFromSession(token: string): AuthenticatedTenantContext {
-  const payload = decode(token, 'sess', 'SESSION_INVALID', 'SESSION_EXPIRED');
+  const payload = decodeSession(token);
   return { organizationId: payload.org, userId: payload.sub, ...(payload.store ? { storeId: payload.store } : {}), registerId: payload.reg, permissions: new Set(rolePermissions[payload.role] ?? []) };
 }

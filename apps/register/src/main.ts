@@ -3,7 +3,7 @@ import path from 'node:path';
 import { writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { CallbackReceiptPrinter, SimulatedCashDrawer, UnavailableCashDrawer } from './hardware-adapters.js';
-import type { ReceiptDocument } from '@rjpos/hardware-contracts';
+import { CallbackLabelPrinter, renderLabelHtml, type LabelDocument, type ReceiptDocument } from '@rjpos/hardware-contracts';
 import {
   loadRegisterEnvironment,
   resolveRendererTarget,
@@ -56,6 +56,23 @@ const printer = new CallbackReceiptPrinter(hardwareMode, async (receipt) => {
   printWindow.destroy();
 });
 
+// Labels print through the OS printer driver (works with any driver-backed label printer). Simulated mode validates only.
+const labelPrinter = new CallbackLabelPrinter(hardwareMode, async (document) => {
+  if (hardwareMode === 'simulated') return;
+  const printWindow = new BrowserWindow({ show: false, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  try {
+    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderLabelHtml(document))}`);
+    await new Promise<void>((resolve, reject) => printWindow.webContents.print({ silent: true, printBackground: true, margins: { marginType: 'none' }, pageSize: { width: Math.round(document.widthMm * 1000), height: Math.round(document.heightMm * 1000) } }, (success, failureReason) => success ? resolve() : reject(new Error(failureReason || 'LABEL_PRINTER_FAILED'))));
+  } finally { printWindow.destroy(); }
+});
+
+/** IPC is honored only from our own renderer (packaged origin, or the configured dev server), never from other frames or pages. */
+let trustedOrigin = PACKAGED_RENDERER_ORIGIN;
+function trustedSender(event: Electron.IpcMainInvokeEvent): boolean {
+  try { return new URL(event.senderFrame?.url ?? '').origin === trustedOrigin && event.senderFrame === event.sender.mainFrame; } catch { return false; }
+}
+const untrusted = { ok: false, status: 'error', code: 'IPC_SENDER_REJECTED', message: 'Request rejected.', retryable: false } as const;
+
 function reportStartupFailure(error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`RJ POS register startup failed: ${message}`);
@@ -75,9 +92,13 @@ async function runSmokeVerification(
         rendererOrigin: location.origin,
         serverStatus: Array.from(document.querySelectorAll('.status')).map((element) => element.textContent?.trim()).find((value) => value?.startsWith('Server')) ?? null,
         hardwareStatus: (await window.rjpos.hardwareStatus()).printer,
+        screen: document.querySelector('[aria-label="PIN"], input[type="password"]') || /Enter your PIN/i.test(document.body.innerText) ? 'sign-in' : 'register',
+        csp: await fetch(location.href).then((response) => response.headers.get('content-security-policy')).catch(() => null),
       };
     })()
-  `)) as { heading: string | null; rendererOrigin: string; serverStatus: string | null; hardwareStatus: string };
+  `)) as { heading: string | null; rendererOrigin: string; serverStatus: string | null; hardwareStatus: string; screen: string; csp: string | null };
+  // The sign-in screen has no status pill, so the API is also probed directly.
+  if (result.serverStatus === null) result.serverStatus = await fetch(`${apiUrl}/health`, { signal: AbortSignal.timeout(3_000) }).then((response) => (response.ok ? 'Server online' : null)).catch(() => null);
   const smokeResult = {
     ...result,
     bounds: window.getBounds(),
@@ -100,6 +121,7 @@ async function runSmokeVerification(
     result.heading === 'Downtown Register' &&
       result.rendererOrigin === PACKAGED_RENDERER_ORIGIN &&
       result.serverStatus === 'Server online' &&
+      (app.isPackaged ? Boolean(result.csp?.includes("default-src 'self'")) : true) &&
       ['simulated', 'unavailable'].includes(result.hardwareStatus) &&
       securityPreferences.contextIsolation === true &&
       securityPreferences.nodeIntegration === false &&
@@ -141,6 +163,7 @@ async function createWindow(): Promise<void> {
     await window.loadURL(`${PACKAGED_RENDERER_ORIGIN}/index.html`);
   } else {
     const allowedOrigin = new URL(rendererTarget.value).origin;
+    trustedOrigin = allowedOrigin;
     window.webContents.on('will-navigate', (event, navigationUrl) => {
       if (new URL(navigationUrl).origin !== allowedOrigin)
         event.preventDefault();
@@ -159,13 +182,19 @@ async function createWindow(): Promise<void> {
   await runSmokeVerification(window, securityPreferences);
 }
 
+ipcMain.handle('hardware:print-labels', async (event, document: unknown) => {
+  if (!trustedSender(event)) return untrusted;
+  return labelPrinter.print(document as LabelDocument);
+});
 ipcMain.handle('hardware:status', async () => ({ scanner: 'ready' as const, printer: await printer.status(), drawer: await drawer.status(), terminal: hardwareMode }));
-ipcMain.handle('hardware:print-receipt', async (_event, orderId: unknown, sessionToken: unknown) => {
+ipcMain.handle('hardware:print-receipt', async (event, orderId: unknown, sessionToken: unknown) => {
+  if (!trustedSender(event)) return untrusted;
   try { return await printer.print(await fetchReceipt(String(orderId), tokenOf(sessionToken))); }
   catch (error) { reportStartupFailure(error); return { ok: false, status: 'error', code: 'PRINT_FAILED', message: 'Receipt could not be printed. Check the printer and try again.', retryable: true }; }
 });
-ipcMain.handle('hardware:test-printer', async () => printer.print({ orderNumber: 'HARDWARE-TEST', storeName: 'RJ POS', totalMinor: '0', currency: 'USD', lines: [{ label: 'Printer test successful', quantity: 1, totalMinor: '0' }] }));
-ipcMain.handle('hardware:open-drawer', async (_event, request: unknown) => {
+ipcMain.handle('hardware:test-printer', async (event) => !trustedSender(event) ? untrusted : printer.print({ orderNumber: 'HARDWARE-TEST', storeName: 'RJ POS', totalMinor: '0', currency: 'USD', lines: [{ label: 'Printer test successful', quantity: 1, totalMinor: '0' }] }));
+ipcMain.handle('hardware:open-drawer', async (event, request: unknown) => {
+  if (!trustedSender(event)) return untrusted;
   try {
     const value = request && typeof request === 'object' ? request as { reason?: unknown; orderId?: unknown; elevationToken?: unknown; sessionToken?: unknown } : {};
     if (typeof value.orderId === 'string') {
@@ -198,6 +227,12 @@ void app
         }
         return net.fetch(pathToFileURL(rendererPath).toString());
       });
+    }
+    if (app.isPackaged) {
+      // Static export needs inline bootstrap scripts/styles; everything else is same-origin, plus the configured API.
+      const apiOrigin = new URL(apiUrl).origin;
+      const policy = `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ${apiOrigin}; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`;
+      session.defaultSession.webRequest.onHeadersReceived((details, callback) => callback({ responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [policy] } }));
     }
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);

@@ -28,14 +28,14 @@ export async function api<T>(path: string, init?: RequestInit & { elevationToken
   try {
     const response = await fetch(`${API}${path}`, { ...request, headers: {
       'content-type': 'application/json', ...(sessionToken && !anonymous ? { 'x-rjpos-session': sessionToken } : {}),
-      ...(elevationToken ? { 'x-rjpos-elevation': elevationToken } : {}), ...request.headers,
+      ...(elevationToken ? { 'x-rjpos-elevation': elevationToken } : {}), ...(process.env.NEXT_PUBLIC_RJPOS_REGISTER_ID ? { 'x-rjpos-register-id': process.env.NEXT_PUBLIC_RJPOS_REGISTER_ID } : {}), ...request.headers,
     }, signal: request.signal ?? AbortSignal.timeout(10_000) });
     const body = (typeof response.text === 'function'
       ? await response.text().then((text) => text ? JSON.parse(text) : null)
       : await response.json()) as T & { error?: { code: string } } | null;
     if (!response.ok) {
       const code = body?.error?.code ?? `HTTP_${response.status}`;
-      if (code === 'SESSION_EXPIRED' || code === 'SESSION_INVALID') onSessionLost?.();
+      if (code === 'SESSION_EXPIRED' || code === 'SESSION_INVALID' || code === 'SESSION_REVOKED') onSessionLost?.();
       throw new Error(code);
     }
     return body as T;
@@ -52,6 +52,7 @@ const FRIENDLY_ERRORS: Record<string, string> = {
   LOGIN_LOCKED: 'Too many wrong PINs. Wait a minute and try again.',
   SESSION_EXPIRED: 'Your session ended. Sign in again.',
   SESSION_INVALID: 'Your session ended. Sign in again.',
+  SESSION_REVOKED: 'You were signed out. Sign in again.',
   ELEVATION_LOCKED: 'Too many wrong PINs. Wait a minute and try again.',
   ELEVATION_EXPIRED: 'Manager approval expired. Approve again.',
   ELEVATION_INVALID: 'Manager approval is no longer valid. Approve again.',

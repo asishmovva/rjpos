@@ -178,6 +178,7 @@ enum HeldTransactionStatus {
   HELD
   RESUMED
   CANCELLED
+  EXPIRED
 }
 
 enum PaymentStatus {
@@ -296,6 +297,9 @@ model Organization {
   costHistory            ProductCostHistory[]
   cashMovements          CashMovement[]
   dayCloses              DayClose[]
+  salesChannels          SalesChannel[]
+  vendorClaims           VendorClaim[]
+  vendorClaimLines       VendorClaimLine[]
 }
 
 model Store {
@@ -346,6 +350,8 @@ model Employee {
   lastName              String
   status                EmployeeStatus             @default(ACTIVE)
   pinHash               String?
+  /// Bumped to revoke every outstanding session for this employee (deactivation, role change, PIN reset).
+  sessionVersion        Int                        @default(0)
   organization          Organization               @relation(fields: [organizationId], references: [id])
   stores                EmployeeStore[]
   sessions              RegisterSession[]          @relation("RegisterSessionOpenedBy")
@@ -542,6 +548,7 @@ model ProductVariant {
   specialPrices      SpecialPrice[]
   vendorDeals        VendorDeal[]
   costHistory        ProductCostHistory[]
+  vendorClaimLines   VendorClaimLine[]
   organization       Organization               @relation(fields: [organizationId], references: [id])
   product            Product                    @relation(fields: [organizationId, productId], references: [organizationId, id])
   barcodes           Barcode[]
@@ -574,6 +581,8 @@ model Barcode {
   organizationId String         @db.Uuid
   variantId      String         @db.Uuid
   barcodeValue   String
+  /// PRIMARY is the printed UPC; ALTERNATE is any additional UPC that sells the same variant.
+  kind           BarcodeKind    @default(PRIMARY)
   organization   Organization   @relation(fields: [organizationId], references: [id])
   variant        ProductVariant @relation(fields: [organizationId, variantId], references: [organizationId, id])
 
@@ -872,6 +881,8 @@ model Order {
   registerId              String                 @db.Uuid
   registerSessionId       String                 @db.Uuid
   customerId              String?                @db.Uuid
+  salesChannelId          String?                @db.Uuid
+  channelNameSnapshot     String                 @default("Walk-In")
   orderNumber             String
   status                  OrderStatus            @default(DRAFT)
   subtotalMinor           BigInt
@@ -889,6 +900,7 @@ model Order {
   register                Register               @relation(fields: [organizationId, registerId], references: [organizationId, id])
   session                 RegisterSession        @relation(fields: [organizationId, registerSessionId], references: [organizationId, id])
   customer                Customer?              @relation(fields: [organizationId, customerId], references: [organizationId, id])
+  salesChannel            SalesChannel?          @relation(fields: [organizationId, salesChannelId], references: [organizationId, id])
   ageVerifiedBy           Employee?              @relation("OrderAgeVerifiedBy", fields: [organizationId, ageVerifiedByEmployeeId], references: [organizationId, id])
   items                   OrderItem[]
   payments                Payment[]
@@ -900,6 +912,7 @@ model Order {
   @@unique([organizationId, id])
   @@unique([organizationId, storeId, orderNumber])
   @@index([organizationId, storeId, createdAt])
+  @@index([organizationId, salesChannelId, createdAt])
   @@index([organizationId, status])
 }
 
@@ -1158,6 +1171,7 @@ model Vendor {
   purchaseOrders   PurchaseOrder[]
   invoiceDocuments InvoiceDocument[]
   deals            VendorDeal[]
+  claims           VendorClaim[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, name])
@@ -1483,6 +1497,7 @@ model HeldTransaction {
   customerId          String?               @db.Uuid
   resumedByEmployeeId String?               @db.Uuid
   label               String
+  note                String?
   cartJson            Json
   status              HeldTransactionStatus @default(HELD)
   idempotencyKey      String
@@ -1490,6 +1505,7 @@ model HeldTransaction {
   heldAt              DateTime              @default(now())
   resumedAt           DateTime?
   cancelledAt         DateTime?
+  expiredAt           DateTime?
   organization        Organization          @relation(fields: [organizationId], references: [id])
   store               Store                 @relation(fields: [organizationId, storeId], references: [organizationId, id])
   register            Register              @relation(fields: [organizationId, storeId, registerId], references: [organizationId, storeId, id])
@@ -1631,6 +1647,7 @@ model PriceBook {
   updatedAt      DateTime       @updatedAt
   organization   Organization   @relation(fields: [organizationId], references: [id])
   specialPrices  SpecialPrice[]
+  salesChannels  SalesChannel[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, name])
@@ -1786,4 +1803,89 @@ model DayClose {
   @@unique([organizationId, id])
   @@unique([organizationId, storeId, businessDate])
   @@index([organizationId, storeId, businessDate(sort: Desc)])
+}
+
+enum BarcodeKind {
+  PRIMARY
+  ALTERNATE
+}
+
+/// Where an order came from. A channel may be tied to a price book so its orders are priced from that book. No marketplace API integration.
+model SalesChannel {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  name           String
+  code           String
+  priceBookId    String?      @db.Uuid
+  isDefault      Boolean      @default(false)
+  active         Boolean      @default(true)
+  sortOrder      Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  priceBook      PriceBook?   @relation(fields: [organizationId, priceBookId], references: [organizationId, id])
+  orders         Order[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, code])
+  @@unique([organizationId, name])
+}
+
+enum VendorClaimKind {
+  RETURN
+  SHORTAGE
+  DAMAGE
+  PRICE_DIFFERENCE
+}
+
+enum VendorClaimStatus {
+  DRAFT
+  SUBMITTED
+  CREDITED
+  REJECTED
+  CANCELLED
+}
+
+/// Vendor returns and discrepancy/credit claims. Only RETURN claims move stock (on submit); credits are recorded, never inferred.
+model VendorClaim {
+  id                  String            @id @default(uuid()) @db.Uuid
+  organizationId      String            @db.Uuid
+  storeId             String            @db.Uuid
+  vendorId            String            @db.Uuid
+  kind                VendorClaimKind
+  status              VendorClaimStatus @default(DRAFT)
+  purchaseOrderId     String?           @db.Uuid
+  invoiceDocumentId   String?           @db.Uuid
+  reason              String
+  expectedCreditMinor BigInt            @default(0)
+  creditedMinor       BigInt?
+  creditReference     String?
+  createdByEmployeeId String            @db.Uuid
+  submittedAt         DateTime?
+  resolvedAt          DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  organization        Organization      @relation(fields: [organizationId], references: [id])
+  vendor              Vendor            @relation(fields: [organizationId, vendorId], references: [organizationId, id])
+  lines               VendorClaimLine[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, storeId, status, createdAt(sort: Desc)])
+  @@index([organizationId, vendorId, status])
+}
+
+model VendorClaimLine {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
+  claimId        String         @db.Uuid
+  variantId      String         @db.Uuid
+  quantity       Int
+  unitCostMinor  BigInt
+  reason         String?
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  claim          VendorClaim    @relation(fields: [organizationId, claimId], references: [organizationId, id])
+  variant        ProductVariant @relation(fields: [organizationId, variantId], references: [organizationId, id])
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, claimId, variantId])
 }

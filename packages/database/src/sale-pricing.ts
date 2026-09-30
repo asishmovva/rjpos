@@ -1,3 +1,4 @@
+import { PosError } from './pos-errors.js';
 import type { Prisma } from '@prisma/client';
 
 type Tx = Prisma.TransactionClient;
@@ -37,4 +38,11 @@ export async function loadSpecialPrices(tx: Tx, input: { organizationId: string;
     AND: [{ OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: input.now } }] }, { OR: [{ effectiveTo: null }, { effectiveTo: { gt: input.now } }] }],
   }, orderBy: [{ effectiveFrom: { sort: 'asc', nulls: 'first' } }, { createdAt: 'asc' }] });
   return { priceBookName: book.name, prices: new Map(rows.map((row) => [row.variantId, row.amountMinor])) };
+}
+
+/** Resolves an active sales channel. A channel tied to a price book prices its orders from that book. */
+export async function resolveSalesChannel(tx: Tx, organizationId: string, channelId: string): Promise<{ id: string; name: string; priceBookId: string | null }> {
+  const channel = await tx.salesChannel.findFirst({ where: { id: channelId, organizationId, active: true }, select: { id: true, name: true, priceBookId: true } });
+  if (!channel) throw new PosError('SALES_CHANNEL_NOT_FOUND', 404);
+  return channel;
 }

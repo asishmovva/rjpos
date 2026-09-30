@@ -13,7 +13,7 @@ import type {
 import { PosError, requirePositiveQuantity } from './pos-errors.js';
 import { findGiftCardByCode, giftCardBalance, loyaltyBalance } from './phase-three.js';
 import { resolveAutomaticPromotions } from './phase-five.js';
-import { loadDefaultTaxProfile, loadSpecialPrices, resolveLineTax, variantTaxInclude } from './sale-pricing.js';
+import { loadDefaultTaxProfile, loadSpecialPrices, resolveLineTax, resolveSalesChannel, variantTaxInclude } from './sale-pricing.js';
 
 export type CheckoutLine = {
   variantId: string;
@@ -34,6 +34,8 @@ export type CheckoutContext = {
   customerId?: string;
   /** Optional named price book (channel/special pricing). Falls back to the standard store price per line. */
   priceBookId?: string;
+  /** Sales channel (walk-in, DoorDash, phone, ...). A channel with a price book prices the order from it unless priceBookId is given. */
+  channelId?: string;
 };
 
 export type MixedTender = {
@@ -78,7 +80,7 @@ function assertCheckoutInput(input: CheckoutContext): void {
 
 export async function quoteCheckout(
   prisma: PrismaClient,
-  input: { organizationId: string; storeId: string; lines: Array<{ variantId: string; quantity: number; discount?: CartDiscount }>; orderDiscount?: CartDiscount; priceBookId?: string },
+  input: { organizationId: string; storeId: string; lines: Array<{ variantId: string; quantity: number; discount?: CartDiscount }>; orderDiscount?: CartDiscount; priceBookId?: string; channelId?: string },
 ) {
   if (!input.lines.length) throw new PosError('CART_EMPTY');
   const ids = new Set<string>();
@@ -102,8 +104,10 @@ export async function quoteCheckout(
     if (!store) throw new PosError('STORE_NOT_FOUND', 404);
     if (variants.length !== ids.size) throw new PosError('PRODUCT_VARIANT_NOT_FOUND', 404);
     const byId = new Map(variants.map((variant) => [variant.id, variant]));
-    const specials = input.priceBookId ? await loadSpecialPrices(tx, { organizationId: input.organizationId, storeId: input.storeId, priceBookId: input.priceBookId, variantIds: [...ids], now: new Date() }) : null;
-    if (input.priceBookId && !specials) throw new PosError('PRICE_BOOK_NOT_FOUND', 404);
+    const channel = input.channelId ? await resolveSalesChannel(tx, input.organizationId, input.channelId) : null;
+    const priceBookId = input.priceBookId ?? channel?.priceBookId ?? undefined;
+    const specials = priceBookId ? await loadSpecialPrices(tx, { organizationId: input.organizationId, storeId: input.storeId, priceBookId, variantIds: [...ids], now: new Date() }) : null;
+    if (priceBookId && !specials) throw new PosError('PRICE_BOOK_NOT_FOUND', 404);
     const defaultTax = await loadDefaultTaxProfile(tx, input.organizationId);
     const authoritative = input.lines.map((line) => {
       const variant = byId.get(line.variantId);
@@ -243,8 +247,10 @@ async function prepareOrder(tx: Tx, input: CheckoutContext) {
   });
   if (variants.length !== requestedIds.length) throw new PosError('PRODUCT_VARIANT_NOT_FOUND', 404);
   const byId = new Map(variants.map((variant) => [variant.id, variant]));
-  const specials = input.priceBookId ? await loadSpecialPrices(tx, { organizationId: input.organizationId, storeId: input.storeId, priceBookId: input.priceBookId, variantIds: requestedIds, now }) : null;
-  if (input.priceBookId && !specials) throw new PosError('PRICE_BOOK_NOT_FOUND', 404);
+  const channel = input.channelId ? await resolveSalesChannel(tx, input.organizationId, input.channelId) : null;
+  const priceBookId = input.priceBookId ?? channel?.priceBookId ?? undefined;
+  const specials = priceBookId ? await loadSpecialPrices(tx, { organizationId: input.organizationId, storeId: input.storeId, priceBookId, variantIds: requestedIds, now }) : null;
+  if (priceBookId && !specials) throw new PosError('PRICE_BOOK_NOT_FOUND', 404);
   const defaultTax = await loadDefaultTaxProfile(tx, input.organizationId);
   const authoritative = input.lines.map((line) => {
     const variant = byId.get(line.variantId);
@@ -293,6 +299,7 @@ async function prepareOrder(tx: Tx, input: CheckoutContext) {
     taxMinor: totals.taxMinor,
     totalMinor: totals.totalMinor,
     ...(input.customerId ? { customerId: input.customerId } : {}),
+    ...(channel ? { salesChannelId: channel.id, channelNameSnapshot: channel.name } : {}),
     ...(requiresAgeVerification && input.ageVerified ? { ageVerifiedAt: now, ageVerifiedByEmployeeId: input.employeeId } : {}),
   }});
   await tx.orderItem.createMany({ data: totals.lines.map((line) => {

@@ -180,3 +180,7 @@
 .customer-search button{min-height:52px;padding:0 20px;border-radius:8px;background:#1f6048;color:#fff;font-weight:800}
 .customer-results{max-height:240px;overflow-y:auto;margin:8px 0}
 .utility-modal>button.danger,.utility-modal>button.primary,.utility-modal>button.quiet{width:100%;margin-top:8px}
+
+.held-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin-bottom:8px}.held-row .held-sale{margin:0}.channel-select{min-height:40px;padding:0 10px;border:1px solid var(--line,#d8d2c2);border-radius:8px;background:#fff;font-weight:700}
+
+@media(max-width:1100px){.topbar{gap:8px;padding:6px 10px}.topbar .status{padding:6px 8px;font-size:11px}.topbar .cashier-summary strong{max-width:96px;overflow:hidden;text-overflow:ellipsis}.topbar nav button{padding:0 9px;font-size:14px}.topbar>button{padding:0 10px;font-size:13px}}

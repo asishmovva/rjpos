@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Register from '../app/page.js';
@@ -21,6 +21,9 @@ describe('Phase 7 touch register and HID scanning', () => {
     if (url.endsWith('/workforce/clock-in') && init?.method === 'POST') return response({ id: 'shift-1', clockedOutAt: null });
     if (url.endsWith('/checkout/quote')) { const body = JSON.parse(String(init?.body)) as { lines: Array<{ quantity: number }> }; const amount = String(body.lines[0]!.quantity * 1000); return response({ subtotalMinor: amount, discountMinor: '0', taxMinor: '0', totalMinor: amount, lines: [{ variantId: 'variant-1', unitPriceMinor: '1000', quantity: body.lines[0]!.quantity, subtotalMinor: amount, discountMinor: '0', taxMinor: '0', totalMinor: amount, promotionName: null }] }); }
     if (url.endsWith('/held-transactions') && init?.method === 'POST') return response({ id: 'held-1' });
+    if (url.endsWith('/held-transactions')) return response([{ id: 'held-9', label: 'Bob', note: 'wallet', heldAt: new Date(Date.now() - 12 * 60_000).toISOString(), ageVerified: true, lineCount: 2, cartJson: { lines: [] }, employee: { firstName: 'Casey', lastName: 'Cashier' }, customer: null, register: { name: 'Front' } }]);
+    if (url.endsWith('/held-transactions/held-9/cancel') && init?.method === 'POST') return response({ id: 'held-9', status: 'CANCELLED' });
+    if (url.endsWith('/sales-channels')) return response([{ id: 'ch-walk', name: 'Walk-In', isDefault: true }, { id: 'ch-dd', name: 'DoorDash', isDefault: false }]);
     if (url.endsWith('/orders')) return response([{ id: 'order-1', orderNumber: 'ORD-1', status: 'COMPLETED', totalMinor: '1000' }]);
     if (url.endsWith('/orders/order-1/receipt')) return response({ id: 'order-1', orderNumber: 'ORD-1', subtotalMinor: '1000', discountMinor: '0', taxMinor: '0', totalMinor: '1000', items: [{ id: 'item-1', productNameSnapshot: 'Quick Whiskey', variantNameSnapshot: '750 ml', quantity: 1, unitPriceMinor: '1000', subtotalMinor: '1000', discountMinor: '0', totalMinor: '1000', promotionNameSnapshot: null }], refunds: [] });
     if (url.endsWith('/orders/order-1/refund') && init?.method === 'POST') return response({ refundId: 'refund-1', status: 'SUCCEEDED' });
@@ -47,9 +50,27 @@ describe('Phase 7 touch register and HID scanning', () => {
 
   it('holds the active cart with cashier-safe feedback', async () => {
     const user = userEvent.setup(); render(<Register />); await user.click(await screen.findByRole('button', { name: /Best seller/ })); await user.click(screen.getByRole('button', { name: 'Hold' }));
+    await user.type(await screen.findByLabelText('Hold name'), 'Bob'); await user.type(screen.getByLabelText('Hold note'), 'back soon'); await user.click(screen.getByRole('button', { name: 'Hold sale' }));
     expect(await screen.findByText('Sale held. You can resume it from this register.')).toBeTruthy();
     const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url).endsWith('/held-transactions') && init?.method === 'POST');
-    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ cart: { lines: [expect.objectContaining({ variantId: 'variant-1', quantity: 1 })] } });
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ label: 'Bob', note: 'back soon', cart: { lines: [expect.objectContaining({ variantId: 'variant-1', quantity: 1 })] } });
+  });
+
+  it('lists held sales with age, register, note, and age state, and cancels one', async () => {
+    const user = userEvent.setup(); render(<Register />); await screen.findByRole('button', { name: /Best seller/ });
+    await user.click(screen.getByRole('button', { name: 'Resume' }));
+    expect(await screen.findByText(/12 min ago · Casey Cashier · Front/)).toBeTruthy();
+    expect(screen.getByText(/2 lines · age verified · wallet/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Cancel held sale Bob' }));
+    expect(await screen.findByText('Held sale cancelled. No sale was recorded.')).toBeTruthy();
+    expect(screen.queryByText(/12 min ago/)).toBeNull();
+  });
+
+  it('prices the sale with the selected channel', async () => {
+    const user = userEvent.setup(); render(<Register />);
+    const channel = await screen.findByLabelText('Sales channel'); await user.selectOptions(channel, 'ch-dd');
+    await user.click(await screen.findByRole('button', { name: /Best seller/ }));
+    await waitFor(() => { const quote = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/checkout/quote')).at(-1); expect(JSON.parse(String(quote?.[1]?.body))).toMatchObject({ channelId: 'ch-dd' }); });
   });
 
   it('shows product search matches in a selectable dropdown', async () => {
@@ -74,10 +95,10 @@ describe('Phase 7 touch register and HID scanning', () => {
   it('uses Price Check without adding the selected item to the cart', async () => {
     const user = userEvent.setup(); render(<Register />);
     await user.click(await screen.findByRole('button', { name: 'Price Check' }));
-    await user.type(screen.getByRole('combobox'), 'quick');
-    await user.click((await screen.findAllByRole('option'))[0]!);
+    await user.type(screen.getByRole('combobox', { name: /Scan UPC|Price check/ }), 'quick');
+    await user.click((await within(await screen.findByRole('listbox', { name: 'Product search results' })).findAllByRole('option'))[0]!);
     expect(screen.queryByLabelText('Quantity')).toBeNull();
-    expect(screen.getByText('Quick Whiskey · 750 ml: $10.00.')).toBeTruthy();
+    expect(await screen.findByText('Quick Whiskey · 750 ml: $10.00.')).toBeTruthy();
   });
 
   it('removes a cart line with the Remove button and reveals a confirm action on swipe without removing', async () => {
