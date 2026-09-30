@@ -19,10 +19,10 @@ export type PurchasedProductRequest = {
   storeId: string; draft?: boolean;
   product: { name: string; categoryId: string; brand: string; description?: string; taxProfileId?: string | null; ageRestricted?: boolean };
   identity: { upc: string; sizeLabel: string; sku?: string };
-  vendor?: { vendorId: string; vendorSku?: string; caseCostMinor: string; unitsPerCase: number; discountPerCaseMinor?: string; rebatePerCaseMinor?: string };
+  vendor?: { vendorId: string; vendorSku?: string; caseCostMinor: string; unitsPerCase: number; discountPerCaseMinor?: string; rebatePerCaseMinor?: string; caseUpc?: string; minimumOrderQuantity?: number; preferred?: boolean };
   sellingUnits: Array<{ name: string; unitsPerPack: number; sku?: string; upc?: string; priceMinor?: string }>;
   specialPrices?: Array<{ priceBookId: string; unitIndex: number; amountMinor: string }>;
-  inventory?: { openingQuantity: number };
+  inventory?: { openingQuantity: number; lowStockThreshold?: number; reorderTarget?: number };
 };
 
 export const costingApi = {
@@ -50,7 +50,7 @@ export type ProductDetail = {
     variants: Array<{ id: string; name: string; sku: string; active: boolean; unitsPerPack: number; baseVariantId: string | null; costMinor: string | null; baseVariant: { id: string; name: string; sku: string } | null; taxProfile: TaxProfile | null; barcodes: Array<{ barcodeValue: string }> }> };
   prices: Array<{ id: string; variantId: string; storeId: string | null; amountMinor: string; effectiveFrom: string }>;
   specialPrices: SpecialPrice[];
-  mappings: Array<{ id: string; vendorId: string; variantId: string; vendorSku: string | null; vendorCostMinor: string; caseCostMinor: string | null; casePackQuantity: number; preferred: boolean; active: boolean; vendor: { id: string; name: string } }>;
+  mappings: Array<{ id: string; vendorId: string; variantId: string; vendorSku: string | null; caseUpc: string | null; minimumOrderQuantity: number; vendorCostMinor: string; caseCostMinor: string | null; casePackQuantity: number; preferred: boolean; active: boolean; vendor: { id: string; name: string } }>;
   levels: Array<{ id: string; variantId: string; onHand: number; reserved: number; store: { id: string; name: string } }>;
   storeCosts: Array<{ id: string; variantId: string; amountMinor: string; store: { id: string; name: string } }>;
   purchaseHistory: Array<{ id: string; orderedQuantity: number; receivedQuantity: number; unitCostMinor: string; unitsPerCase: number | null; caseCostMinor: string | null; discountPerCaseMinor: string | null; createdAt: string; purchaseOrder: { id: string; poNumber: string; status: string; vendor: { id: string; name: string } } }>;
@@ -67,4 +67,20 @@ export type InvoiceReview = {
   invoiceId: string; hasDiscrepancies: boolean;
   lines: Array<{ lineId: string; ignored: boolean; review: ReviewedCost | null; error: string | null; availableDeals: Array<{ id: string; name: string; kind: string }>; dealPreview: ReviewedCost | null }>;
   totals: { linesSubtotalMinor: string; expectedTotalMinor: string | null; discrepancies: Array<{ code: string; message: string; expectedMinor: string; actualMinor: string }> };
+};
+
+export type DayTotals = {
+  storeName: string; businessDate: string; timezone: string; generatedAt: string; transactionCount: number;
+  grossSalesMinor: string; discountsMinor: string; refundsMinor: string; netSalesMinor: string; taxMinor: string; totalCollectedMinor: string; refundCount: number;
+  voids: { count: number; totalMinor: string };
+  tenders: { cashMinor: string; cardMinor: string; giftCardMinor: string; otherMinor: string };
+  cash: { cashSalesMinor: string; cashRefundsMinor: string; paidInMinor: string; paidOutMinor: string; safeDropsMinor: string; adjustmentsNetMinor: string; drawerOpens: number };
+  registerDifferenceMinor: string;
+  registerSessions: Array<{ registerName: string; status: string; openedAt: string; closedAt: string | null; expectedCashMinor: string | null; countedCashMinor: string | null; differenceMinor: string | null }>;
+  openRegisters: Array<{ registerName: string; status: string; openedAt: string }>;
+};
+export const dayCloseApi = {
+  preview: (storeId: string, date: string) => adminRequest<{ finalized: { id: string; closedAt: string } | null; totals: DayTotals }>(`/day-close/preview?${new URLSearchParams({ storeId, date }).toString()}`),
+  finalize: (value: { storeId: string; businessDate: string; acknowledgeOpenRegisters: boolean }) => adminRequest<{ id: string; businessDate: string; totals: DayTotals }>('/day-close', body('POST', value)),
+  history: (storeId: string) => adminRequest<Array<{ id: string; businessDate: string; closedAt: string; openRegisterCount: number; totals: DayTotals }>>(`/day-close?${new URLSearchParams({ storeId }).toString()}`),
 };

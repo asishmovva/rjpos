@@ -79,6 +79,21 @@ describe('New purchased product wizard', () => {
     expect(await screen.findByText('Product created')).toBeTruthy();
   });
 
+  it('sends case UPC, case-multiple minimum order, preferred vendor, and reorder settings', async () => {
+    const user = userEvent.setup(); render(<NewProductPage />); await scan(user);
+    await user.type(screen.getByLabelText('Product name'), 'Stout'); await user.type(screen.getByLabelText('Brand'), 'B'); await user.type(screen.getByLabelText('Size'), '16 oz');
+    await user.selectOptions(screen.getByLabelText('Category'), 'cat-1'); await user.selectOptions(screen.getByLabelText('Vendor'), 'vendor-1');
+    await user.type(screen.getByLabelText('Case cost'), '48'); await user.clear(screen.getByLabelText('Units per case')); await user.type(screen.getByLabelText('Units per case'), '24');
+    await user.type(screen.getByLabelText('Case UPC'), '098765432109'); await user.clear(screen.getByLabelText('Minimum order cases')); await user.type(screen.getByLabelText('Minimum order cases'), '2');
+    await user.click(screen.getByRole('checkbox', { name: /Preferred vendor/ }));
+    await user.type(screen.getByLabelText('Custom pack name'), '18-Pack'); await user.type(screen.getByLabelText('Custom pack bottles'), '18'); await user.click(screen.getByRole('button', { name: 'Add custom pack' }));
+    await user.type(screen.getByLabelText('Desired percent'), '50'); await user.type(screen.getByLabelText('Low-stock threshold'), '12'); await user.type(screen.getByLabelText('Reorder target'), '48');
+    await user.click(screen.getByRole('button', { name: 'Create product' }));
+    await waitFor(() => expect(calls.find((call) => call.url.endsWith('/product-costing/purchased'))).toBeTruthy());
+    expect(calls.find((call) => call.url.endsWith('/product-costing/purchased'))!.body).toMatchObject({ vendor: { caseUpc: '098765432109', minimumOrderQuantity: 48, preferred: false, unitsPerCase: 24 }, inventory: { openingQuantity: 0, lowStockThreshold: 12, reorderTarget: 48 } });
+    expect((calls.find((call) => call.url.endsWith('/product-costing/purchased'))!.body.sellingUnits as Array<{ name: string; unitsPerPack: number }>).map((unit) => [unit.name, unit.unitsPerPack])).toEqual([['Single', 1], ['18-Pack', 18]]);
+  });
+
   it('does not offer creation for a UPC that already exists', async () => {
     lookupResult = { status: 'IN_STORE', upc: '012345678905', variant: { id: 'v1', name: '12 oz', sku: 'CORONA-1', productId: 'product-9', productName: 'Corona Extra', brand: 'Corona', category: 'Beer' } };
     const user = userEvent.setup(); render(<NewProductPage />);

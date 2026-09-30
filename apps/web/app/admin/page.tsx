@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { adminApi, createCatalogFlow, money, type CatalogLookupResult, type Category, type Customer, type Dashboard, type Employee, type GiftCardDetail, type InventoryRow, type LoyaltyProgram, type MasterImportSummary, type MasterProduct, type MovementRow, type OrderRow, type Product, type PurchaseOrderDetail, type PurchaseOrderRow, type PurchaseReceiptRow, type RefundRow, type ReplenishmentSuggestion, type Shift, type StockCount, type Store, type Vendor, type VendorAddress, type VendorMapping, type Transfer, type Promotion } from './admin-client';
 import { EmployeeEditor } from './employee-editor';
 import { PromotionsView, ReplenishmentView, StockCountsView, TransfersView } from './phase-five-views';
@@ -20,6 +20,9 @@ type RegisterRow = {
 
 export default function AdminPage(): React.ReactNode {
   const [area, setArea] = useState<Area>('Dashboard');
+  const mainRef = useRef<HTMLElement>(null);
+  // Each module starts at the top; the sidebar keeps its own scroll position.
+  useEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0; }, [area]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -162,6 +165,7 @@ export default function AdminPage(): React.ReactNode {
           <a className="register-link" href="/admin/reports">Reports &amp; exports</a>
           <a className="register-link" href="/admin/invoices/">Invoice receiving</a>
           <a className="register-link" href="/admin/products/new/">New purchased product</a>
+          <a className="register-link" href="/admin/day-close/">End of day (Z report)</a>
           <a className="register-link" href="/admin/taxes/">Settings · Taxes</a>
           <a className="register-link" href="/admin/price-books/">Settings · Price books</a>
           {areas.map((item) => (
@@ -174,7 +178,7 @@ export default function AdminPage(): React.ReactNode {
           Return to register
         </a>
       </aside>
-      <section className="admin-main">
+      <section className="admin-main" ref={mainRef}>
         <header className="admin-heading">
           <div>
             <span className="eyebrow">Owner workspace</span>

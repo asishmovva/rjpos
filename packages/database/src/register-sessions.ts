@@ -1,4 +1,5 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { calculateCashTotals } from './cash-operations.js';
 import { PosError } from './pos-errors.js';
 
 export async function getActiveRegisterSession(
@@ -152,28 +153,7 @@ export async function closeRegisterSession(
     });
     if (!session) throw new Error('REGISTER_SESSION_NOT_FOUND');
     if (session.status !== 'OPEN') throw new Error('REGISTER_SESSION_NOT_OPEN');
-    const cashPayments = await tx.payment.aggregate({
-      where: {
-        organizationId: input.organizationId,
-        kind: 'CASH',
-        status: { in: ['CAPTURED', 'PARTIALLY_REFUNDED', 'REFUNDED'] },
-        order: { registerSessionId: input.sessionId },
-      },
-      _sum: { capturedMinor: true },
-    });
-    const cashRefunds = await tx.refund.aggregate({
-      where: {
-        organizationId: input.organizationId,
-        status: 'SUCCEEDED',
-        payment: { kind: 'CASH' },
-        order: { registerSessionId: input.sessionId },
-      },
-      _sum: { amountMinor: true },
-    });
-    const expectedCashMinor =
-      session.openingCashMinor +
-      (cashPayments._sum.capturedMinor ?? 0n) -
-      (cashRefunds._sum.amountMinor ?? 0n);
+    const { expectedCashMinor } = await calculateCashTotals(tx, session);
     const closed = await tx.registerSession.update({
       where: { id: session.id },
       data: {

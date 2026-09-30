@@ -184,3 +184,5 @@ export { activeVendorDeals, createVendorDeal, listVendorDeals, updateVendorDeal 
 export { createPurchasedProduct, getProductDetail, lookupUpcForCreation, type PurchasedProductInput, type SellingUnitInput } from './product-costing.js';
 export { recordCostHistory } from './cost-history.js';
 export { loadDefaultTaxProfile, loadSpecialPrices, resolveLineTax } from './sale-pricing.js';
+export { calculateCashTotals, listCashMovements, recordCashMovement, type CashActor, type CashTotals } from './cash-operations.js';
+export { finalizeDayClose, listDayCloses, previewDayClose, todayInTimeZone, zonedMidnightUtc, type DayTotals } from './day-close.js';

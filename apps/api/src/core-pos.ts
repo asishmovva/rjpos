@@ -255,7 +255,7 @@ export class CorePosController {
 
   @Post('orders/:orderId/refund')
   refund(@Req() request: TenantRequest, @Param('orderId') orderId: string,
-    @Body() body: { reason: string; idempotencyKey: string; items: Array<{ orderItemId: string; quantity: number; returnToStock?: boolean }> }) {
+    @Body() body: { reason: string; idempotencyKey: string; items: Array<{ orderItemId: string; quantity: number; returnToStock?: boolean; disposition?: 'RETURN_TO_STOCK' | 'DAMAGED' | 'NON_RESELLABLE' | 'VENDOR_RETURN' }> }) {
     const context = this.context(request, 'order:refund');
     return refundOrder(this.prisma, this.terminal, { organizationId: context.organizationId, orderId,
       employeeId: context.userId, reason: body.reason, idempotencyKey: body.idempotencyKey, items: body.items });

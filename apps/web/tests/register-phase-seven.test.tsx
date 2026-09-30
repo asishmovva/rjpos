@@ -114,11 +114,12 @@ describe('Phase 7 touch register and HID scanning', () => {
     await user.click(await screen.findByRole('button', { name: /ORD-1/ }));
     await user.clear(await screen.findByLabelText('Return quantity for Quick Whiskey'));
     await user.type(screen.getByLabelText('Return quantity for Quick Whiskey'), '1');
+    await user.selectOptions(screen.getByLabelText('Disposition for Quick Whiskey'), 'DAMAGED');
     await user.type(screen.getByLabelText('Return reason'), 'Customer return');
-    await user.click(screen.getByRole('button', { name: 'Confirm refund and return to stock' }));
-    await waitFor(() => expect(screen.getByText('Return completed. Refund and stock movement were recorded.')).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Confirm refund' }));
+    await waitFor(() => expect(screen.getByText(/Return completed/)).toBeTruthy());
     const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url).endsWith('/orders/order-1/refund') && init?.method === 'POST');
-    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ reason: 'Customer return', items: [{ orderItemId: 'item-1', quantity: 1, returnToStock: true }] });
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ reason: 'Customer return', items: [{ orderItemId: 'item-1', quantity: 1, disposition: 'DAMAGED' }] });
     expect((call?.[1]?.headers as Record<string, string>)['x-rjpos-elevation']).toBe('elevation-token');
   });
 });
