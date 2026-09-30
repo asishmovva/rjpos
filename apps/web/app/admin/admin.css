@@ -32,3 +32,6 @@
 .promo-thumb{width:96px;height:54px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}.promo-preview{max-width:320px;border-radius:12px;border:1px solid var(--line)}.narrow{width:70px}.hdr-link{color:var(--green);font-weight:700}.pill.ok{background:#dcebe3;color:#14523a}
 
 .hardware-grid .pill{display:inline-block;margin:0 4px 6px 0}.pill.tone-ok{background:#dcebe3;color:#14523a}.pill.tone-warn{background:#fff0d7;color:#7a4a00}.pill.tone-bad{background:#fde7e4;color:#8d3026}.pill.tone-muted{background:#eef1ee;color:#4a5a52}.hardware-note{grid-column:1/-1}
+.admin-heading>div>a:first-child{display:block}
+.pricing-mode input,.pricing-mode label:last-child input{padding:10px;border:1px solid var(--line);border-radius:7px;font-size:14px;min-width:0;width:110px;background:#fff}
+.steps{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px;padding:0;list-style:none}.steps li{padding:6px 12px;border-radius:999px;background:#eef1ee;color:var(--muted);font-size:13px;font-weight:700}.steps li.on{background:var(--green);color:#fff}.steps li.done{background:#dcebe3;color:#14523a}

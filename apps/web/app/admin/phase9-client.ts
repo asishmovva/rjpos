@@ -25,7 +25,7 @@ export type VendorClaim = { id: string; kind: 'RETURN' | 'SHORTAGE' | 'DAMAGE' |
 export type AuditView = { items: Array<{ id: string; at: string; action: string; actionLabel: string; entityType: string; entityId: string; user: { id: string; name: string } | null; store: { id: string; name: string | null } | null; register: { id: string; name: string | null } | null;
   changes: Array<{ field: string; before: string | null; after: string | null }> }>; page: number; pageSize: number; total: number };
 export type PromoAsset = { id: string; title: string; subtitle: string | null; imageData: string | null; active: boolean; sortOrder: number; startsAt: string | null; endsAt: string | null };
-export type BackupStatus = { configured: boolean; lastAttemptAt: string | null; lastSuccessAt: string | null; result: 'SUCCESS' | 'FAILURE' | 'UNKNOWN'; file: string | null; detail: string | null; stale: boolean; restoreInstructions: string[] };
+export type BackupStatus = { destination: string; fileExists: boolean; fileSizeBytes: number | null; configured: boolean; lastAttemptAt: string | null; lastSuccessAt: string | null; result: 'SUCCESS' | 'FAILURE' | 'UNKNOWN'; file: string | null; detail: string | null; stale: boolean; restoreInstructions: string[] };
 
 export const phaseNineApi = {
   channels: () => adminRequest<SalesChannel[]>('/sales-channels'),
@@ -49,7 +49,7 @@ export const phaseNineApi = {
   velocity: (query: { storeId?: string; lookbackDays?: number; coverDays?: number; leadTimeDays?: number }) => adminRequest<VelocitySuggestion[]>(`/purchasing/velocity-suggestions${qs(query)}`),
   addBarcode: (variantId: string, barcodeValue: string) => adminRequest<{ id: string; barcodeValue: string }>(`/variants/${variantId}/barcodes`, post({ barcodeValue })),
   removeBarcode: (barcodeId: string) => adminRequest<{ removed: true }>(`/barcodes/${barcodeId}/remove`, post()),
-  audit: (query: { page?: number; action?: string; employeeId?: string; entityType?: string; from?: string; to?: string }) => adminRequest<AuditView>(`/audit-view${qs(query)}`),
+  audit: (query: { page?: number; action?: string; employeeId?: string; storeId?: string; entityType?: string; from?: string; to?: string }) => adminRequest<AuditView>(`/audit-view${qs(query)}`),
   promos: () => adminRequest<PromoAsset[]>('/promo-assets'),
   savePromo: (id: string | null, value: Partial<Omit<PromoAsset, 'id'>>) => id ? adminRequest<PromoAsset>(`/promo-assets/${id}`, patch(value)) : adminRequest<PromoAsset>('/promo-assets', post(value)),
   deletePromo: (id: string) => adminRequest<{ deleted: true }>(`/promo-assets/${id}/delete`, post()),

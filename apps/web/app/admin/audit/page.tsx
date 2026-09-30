@@ -1,5 +1,6 @@
 'use client';
 import { Fragment, useCallback, useEffect, useState } from 'react';
+import { adminApi, type Employee, type Store } from '../admin-client';
 import { errorText, phaseNineApi, type AuditView } from '../phase9-client';
 import '../admin.css';
 import '../costing.css';
@@ -7,11 +8,13 @@ import '../costing.css';
 /** Readable audit trail: who did what to which record, old and new values, when, and where. */
 export default function AuditPage(): React.ReactNode {
   const [view, setView] = useState<AuditView | null>(null); const [page, setPage] = useState(1); const [action, setAction] = useState(''); const [entityType, setEntityType] = useState('');
+  const [employees, setEmployees] = useState<Employee[]>([]); const [stores, setStores] = useState<Store[]>([]); const [employeeId, setEmployeeId] = useState(''); const [storeId, setStoreId] = useState('');
+  useEffect(() => { void Promise.all([adminApi.employees(), adminApi.stores()]).then(([people, locations]) => { setEmployees(people.items); setStores(locations); }).catch(() => undefined); }, []);
   const [from, setFrom] = useState(''); const [to, setTo] = useState(''); const [error, setError] = useState(''); const [open, setOpen] = useState<string | null>(null);
   const load = useCallback(async () => {
     setError('');
-    try { setView(await phaseNineApi.audit({ page, action: action.trim(), entityType: entityType.trim(), ...(from ? { from: new Date(`${from}T00:00:00`).toISOString() } : {}), ...(to ? { to: new Date(`${to}T23:59:59`).toISOString() } : {}) })); } catch (cause) { setError(errorText(cause)); }
-  }, [page, action, entityType, from, to]);
+    try { setView(await phaseNineApi.audit({ page, action: action.trim(), entityType: entityType.trim(), employeeId, storeId, ...(from ? { from: new Date(`${from}T00:00:00`).toISOString() } : {}), ...(to ? { to: new Date(`${to}T23:59:59`).toISOString() } : {}) })); } catch (cause) { setError(errorText(cause)); }
+  }, [page, action, entityType, employeeId, storeId, from, to]);
   useEffect(() => { void load(); }, [load]);
   const pages = view ? Math.max(1, Math.ceil(view.total / view.pageSize)) : 1;
   return <main className="admin-main costing-page">
@@ -20,6 +23,8 @@ export default function AuditPage(): React.ReactNode {
     <form className="inline-form" onSubmit={(event) => { event.preventDefault(); setPage(1); }}>
       <label>Action<input value={action} onChange={(event) => { setAction(event.target.value); setPage(1); }} placeholder="e.g. PRICE" /></label>
       <label>Record type<input value={entityType} onChange={(event) => { setEntityType(event.target.value); setPage(1); }} placeholder="e.g. Order" /></label>
+      <label>Employee<select aria-label="Employee" value={employeeId} onChange={(event) => { setEmployeeId(event.target.value); setPage(1); }}><option value="">Anyone</option>{employees.map((person) => <option key={person.id} value={person.id}>{person.firstName} {person.lastName}</option>)}</select></label>
+      <label>Store<select aria-label="Store" value={storeId} onChange={(event) => { setStoreId(event.target.value); setPage(1); }}><option value="">All stores</option>{stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select></label>
       <label>From<input type="date" value={from} onChange={(event) => { setFrom(event.target.value); setPage(1); }} /></label>
       <label>To<input type="date" value={to} onChange={(event) => { setTo(event.target.value); setPage(1); }} /></label></form>
     <section className="wizard-section" aria-label="Audit records"><table className="line-table"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Record</th><th>Where</th></tr></thead><tbody>

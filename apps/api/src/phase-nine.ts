@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { Body, Controller, ForbiddenException, Get, Inject, Param, Patch, Post, Query, Req, Res } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
@@ -148,9 +148,10 @@ export class PhaseNineController {
       const status = JSON.parse((await readFile(resolve(directory, 'status.json'), 'utf8')).replace(/^﻿/, '')) as { lastAttemptAt?: string; lastSuccessAt?: string; result?: string; file?: string; detail?: string };
       const lastSuccessAt = status.lastSuccessAt ?? null;
       const ageHours = lastSuccessAt ? (Date.now() - new Date(lastSuccessAt).getTime()) / 3_600_000 : null;
-      return { configured: true, lastAttemptAt: status.lastAttemptAt ?? null, lastSuccessAt, result: status.result === 'SUCCESS' ? 'SUCCESS' : 'FAILURE', file: status.file ?? null, detail: status.detail ?? null, stale: ageHours === null || ageHours > 36, restoreInstructions };
+      const fileStat = status.file && /^rjpos-[\w.-]+\.dump$/.test(status.file) ? await stat(resolve(directory, status.file)).catch(() => null) : null;
+      return { destination: 'Local folder on the server (backups)', fileExists: fileStat !== null, fileSizeBytes: fileStat?.size ?? null, configured: true, lastAttemptAt: status.lastAttemptAt ?? null, lastSuccessAt, result: status.result === 'SUCCESS' ? 'SUCCESS' : 'FAILURE', file: status.file ?? null, detail: status.detail ?? null, stale: ageHours === null || ageHours > 36, restoreInstructions };
     } catch {
-      return { configured: false, lastAttemptAt: null, lastSuccessAt: null, result: 'UNKNOWN', file: null, detail: 'No backup has been recorded yet. Run scripts\\backup-database.ps1 (schedule it daily).', stale: true, restoreInstructions };
+      return { destination: 'Local folder on the server (backups)', fileExists: false, fileSizeBytes: null, configured: false, lastAttemptAt: null, lastSuccessAt: null, result: 'UNKNOWN', file: null, detail: 'No backup has been recorded yet. Run scripts\\backup-database.ps1 (schedule it daily).', stale: true, restoreInstructions };
     }
   }
 }

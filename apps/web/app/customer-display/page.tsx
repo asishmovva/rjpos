@@ -21,7 +21,7 @@ export default function CustomerDisplayPage(): React.ReactNode {
     return () => window.clearInterval(timer);
   }, [promoCount]);
   const listRef = useRef<HTMLUListElement>(null);
-  useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight }); }, [state.lines.length, state.itemCount]);
+  useEffect(() => { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, [state.lines.length, state.itemCount]);
 
   const promo = promoCount ? state.promos[index % promoCount] : undefined;
   const storeName = state.storeName || 'Welcome';
