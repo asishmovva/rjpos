@@ -7,6 +7,8 @@ import { api, adjustmentToDiscount, friendlyError, getApiSessionToken, loadStore
 import { CartLine } from './cart-line';
 import { InventoryView } from './inventory-view';
 import { LockScreen } from './register-lock';
+import { BrandMark } from './brand';
+import { SupportButton } from './support';
 import { AgeCheckDialog, CashOperationsDialog, cashKindNeedsApproval, CustomerCreateForm, CustomerDialog, DiscountDialog, ElevationDialog, GiftCardDialog, isElevationActive, OpenRegisterDialog, SaleCompleteDialog, ShiftReportView, TenderDialog, type CashKind, type Elevation, type SaleSummary, type ShiftReport } from './register-dialogs';
 type CatalogItem = {
   variantId: string;
@@ -608,7 +610,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
     <main className="shell">
       <header className="topbar">
         <div>
-          <span className="eyebrow">RJ POS</span>
+          <BrandMark />
           <h1>{storeName} Register</h1>
         </div>
         <div className={`status ${sessionId ? 'open' : ''}`}>
@@ -626,6 +628,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
           <button onClick={() => setView('inventory')}>Inventory</button>
           <button onClick={() => void loadHistory()}>Orders</button>
           <button onClick={onLock}>Lock</button>
+          <SupportButton />
         </nav>
       </header>
       {view === 'register' && (<>
@@ -704,9 +707,15 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
             <section className="quick-keys" aria-label="Quick Add">
               <div className="quick-title">
                 <h2>Quick Add</h2>
+                <select className="quick-group-select" aria-label="Quick Add group" value={quickGroup} onChange={(event) => { setQuickGroup(event.target.value); setQuickPage(0); }}><option value="All">All</option>{[...new Set(quickKeys.map((key) => key.groupName))].map((group) => <option key={group} value={group}>{group}</option>)}</select>
                 <div className="quick-groups">
                   <button className={quickGroup === 'All' ? 'active' : ''} onClick={() => { setQuickGroup('All'); setQuickPage(0); }}>All</button>
                   {[...new Set(quickKeys.map((key) => key.groupName))].map((group) => <button className={quickGroup === group ? 'active' : ''} key={group} onClick={() => { setQuickGroup(group); setQuickPage(0); }}>{group}</button>)}
+                </div>
+                <div className="qa-pager">
+                  <button aria-label="Previous Quick Add page" disabled={activeQuickPage === 0} onClick={() => setQuickPage(activeQuickPage - 1)}><span aria-hidden="true">‹</span><span className="pg-word"> Prev</span></button>
+                  <span aria-live="polite">{activeQuickPage + 1} / {quickPages}</span>
+                  <button aria-label="Next Quick Add page" disabled={activeQuickPage >= quickPages - 1} onClick={() => setQuickPage(activeQuickPage + 1)}><span className="pg-word">Next </span><span aria-hidden="true">›</span></button>
                 </div>
                 <button className="text" onClick={() => requireElevation('Approve managing Quick Add buttons.', () => window.location.assign('/admin/register-settings/'))}>Manage</button>
               </div>
@@ -719,13 +728,6 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
                     : <span key={`empty-${index}`} className="qa-empty" aria-hidden="true" />;
                 })}
               </div>
-              {quickPages > 1 && (
-                <div className="qa-pager">
-                  <button aria-label="Previous Quick Add page" disabled={activeQuickPage === 0} onClick={() => setQuickPage(activeQuickPage - 1)}>‹ Prev</button>
-                  <span aria-live="polite">Page {activeQuickPage + 1} of {quickPages}</span>
-                  <button aria-label="Next Quick Add page" disabled={activeQuickPage >= quickPages - 1} onClick={() => setQuickPage(activeQuickPage + 1)}>Next ›</button>
-                </div>
-              )}
             </section>
             <section className="payment" aria-label="Payment">
               {(customer || giftApplied || loyaltyPoints > 0) && (
@@ -737,7 +739,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
               <div className="totals" aria-label="Sale totals">
                 <div className="totals-detail">
                   <span>Subtotal <b>{money(subtotal)}</b></span>
-                  {discount > 0n && <span>{adjustments.active ? 'Discounts' : 'Promotions'} <b>−{money(discount)}</b></span>}
+                  <span className={discount > 0n ? '' : 'zero'}>Discount <b>{discount > 0n ? '−' : ''}{money(discount)}</b></span>
                   <span>Tax <b>{money(projectedTax)}</b></span>
                 </div>
                 <div className="total"><span>Total</span><b>{money(total)}</b></div>
