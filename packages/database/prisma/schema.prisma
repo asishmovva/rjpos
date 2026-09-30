@@ -298,6 +298,7 @@ model Organization {
   cashMovements          CashMovement[]
   dayCloses              DayClose[]
   salesChannels          SalesChannel[]
+  promoAssets            PromoAsset[]
   vendorClaims           VendorClaim[]
   vendorClaimLines       VendorClaimLine[]
 }
@@ -1888,4 +1889,23 @@ model VendorClaimLine {
 
   @@unique([organizationId, id])
   @@unique([organizationId, claimId, variantId])
+}
+
+/// Customer-facing display content: a simple image + message that rotates on the second screen. Not a CMS.
+model PromoAsset {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  title          String
+  subtitle       String?
+  imageData      String?
+  active         Boolean      @default(true)
+  sortOrder      Int          @default(0)
+  startsAt       DateTime?
+  endsAt         DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, id])
+  @@index([organizationId, active, sortOrder])
 }

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, net, protocol, session } from 'electron';
+import { app, BrowserWindow, ipcMain, net, protocol, screen, session } from 'electron';
 import path from 'node:path';
 import { writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -68,6 +68,7 @@ const labelPrinter = new CallbackLabelPrinter(hardwareMode, async (document) => 
 
 /** IPC is honored only from our own renderer (packaged origin, or the configured dev server), never from other frames or pages. */
 let trustedOrigin = PACKAGED_RENDERER_ORIGIN;
+let customerDisplay: BrowserWindow | null = null;
 function trustedSender(event: Electron.IpcMainInvokeEvent): boolean {
   try { return new URL(event.senderFrame?.url ?? '').origin === trustedOrigin && event.senderFrame === event.sender.mainFrame; } catch { return false; }
 }
@@ -182,11 +183,29 @@ async function createWindow(): Promise<void> {
   await runSmokeVerification(window, securityPreferences);
 }
 
+/** Opens (or closes) the customer-facing display: fullscreen on a second monitor when one exists, otherwise a normal window. No preload, no IPC. */
+ipcMain.handle('display:toggle-customer', async (event) => {
+  if (!trustedSender(event)) return untrusted;
+  if (customerDisplay && !customerDisplay.isDestroyed()) { customerDisplay.close(); return { ok: true, open: false }; }
+  const displays = screen.getAllDisplays(); const primary = screen.getPrimaryDisplay();
+  const external = displays.find((candidate) => candidate.id !== primary.id);
+  const target = external ?? primary;
+  const window = new BrowserWindow({
+    title: 'RJ POS Customer Display', x: target.bounds.x + (external ? 0 : 60), y: target.bounds.y + (external ? 0 : 60), width: external ? target.bounds.width : 1100, height: external ? target.bounds.height : 640,
+    fullscreen: Boolean(external), autoHideMenuBar: true, backgroundColor: '#0f1f19', webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  customerDisplay = window;
+  window.on('closed', () => { if (customerDisplay === window) customerDisplay = null; });
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', (navigation) => navigation.preventDefault());
+  await window.loadURL(`${trustedOrigin}/customer-display/`);
+  return { ok: true, open: true, external: Boolean(external) };
+});
 ipcMain.handle('hardware:print-labels', async (event, document: unknown) => {
   if (!trustedSender(event)) return untrusted;
   return labelPrinter.print(document as LabelDocument);
 });
-ipcMain.handle('hardware:status', async () => ({ scanner: 'ready' as const, printer: await printer.status(), drawer: await drawer.status(), terminal: hardwareMode }));
+ipcMain.handle('hardware:status', async () => ({ scanner: 'ready' as const, printer: await printer.status(), labelPrinter: await labelPrinter.status(), drawer: await drawer.status(), terminal: hardwareMode }));
 ipcMain.handle('hardware:print-receipt', async (event, orderId: unknown, sessionToken: unknown) => {
   if (!trustedSender(event)) return untrusted;
   try { return await printer.print(await fetchReceipt(String(orderId), tokenOf(sessionToken))); }

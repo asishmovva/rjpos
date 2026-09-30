@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { Body, Controller, ForbiddenException, Get, Inject, Param, Patch, Post, Query, Req, Res } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
@@ -6,6 +6,7 @@ import type { Response } from 'express';
 import {
   addAlternateBarcode, applyBulkOperation, cancelHeldTransaction, cancelVendorClaim, commitCsvImport, createSalesChannel, createVendorClaim, exportCsv, expireStaleHeldTransactions, listAuditView, listSalesChannels, listVendorClaims,
   previewBulkOperation, previewCsvImport, PosError, recordVendorCredit, revokeEmployeeSessions, rejectVendorClaim, removeAlternateBarcode, setVendorCaseUpc, submitVendorClaim, updateSalesChannel, velocitySuggestions,
+  activePromoAssets, deletePromoAsset, listPromoAssets, savePromoAsset, type PromoInput,
   CSV_KINDS, type AdminActor, type CsvKind,
 } from '@rjpos/database';
 import { PRISMA } from './core-pos.js';
@@ -44,6 +45,19 @@ export class PhaseNineController {
   async addChannel(@Req() request: TenantRequest, @Body() body: Parameters<typeof createSalesChannel>[2]) { return createSalesChannel(this.prisma, await this.actor(request, 'settings:write'), body); }
   @Patch('admin/sales-channels/:id')
   async editChannel(@Req() request: TenantRequest, @Param('id') id: string, @Body() body: Parameters<typeof updateSalesChannel>[3]) { return updateSalesChannel(this.prisma, await this.actor(request, 'settings:write'), id, body); }
+
+  // Customer display promotions ----------------------------------------------------------------------------------------
+  /** Register-facing: active promotions the register forwards to the customer display. */
+  @Get('customer-display/promotions')
+  async displayPromotions(@Req() request: TenantRequest) { return activePromoAssets(this.prisma, (await this.actor(request, 'sale:create')).organizationId); }
+  @Get('admin/promo-assets')
+  async promoList(@Req() request: TenantRequest) { return listPromoAssets(this.prisma, await this.actor(request, 'settings:write')); }
+  @Post('admin/promo-assets')
+  async promoAdd(@Req() request: TenantRequest, @Body() body: PromoInput) { return savePromoAsset(this.prisma, await this.actor(request, 'settings:write'), null, body); }
+  @Patch('admin/promo-assets/:id')
+  async promoEdit(@Req() request: TenantRequest, @Param('id') id: string, @Body() body: Partial<PromoInput>) { return savePromoAsset(this.prisma, await this.actor(request, 'settings:write'), id, body); }
+  @Post('admin/promo-assets/:id/delete')
+  async promoDelete(@Req() request: TenantRequest, @Param('id') id: string) { return deletePromoAsset(this.prisma, await this.actor(request, 'settings:write'), id); }
 
   // Held sales ---------------------------------------------------------------------------------------------------------
   /** Manager cleanup of stale held sales for the store (also runs lazily whenever the list is opened). */
@@ -134,9 +148,10 @@ export class PhaseNineController {
       const status = JSON.parse((await readFile(resolve(directory, 'status.json'), 'utf8')).replace(/^﻿/, '')) as { lastAttemptAt?: string; lastSuccessAt?: string; result?: string; file?: string; detail?: string };
       const lastSuccessAt = status.lastSuccessAt ?? null;
       const ageHours = lastSuccessAt ? (Date.now() - new Date(lastSuccessAt).getTime()) / 3_600_000 : null;
-      return { configured: true, lastAttemptAt: status.lastAttemptAt ?? null, lastSuccessAt, result: status.result === 'SUCCESS' ? 'SUCCESS' : 'FAILURE', file: status.file ?? null, detail: status.detail ?? null, stale: ageHours === null || ageHours > 36, restoreInstructions };
+      const fileStat = status.file && /^rjpos-[\w.-]+\.dump$/.test(status.file) ? await stat(resolve(directory, status.file)).catch(() => null) : null;
+      return { destination: 'Local folder on the server (backups)', fileExists: fileStat !== null, fileSizeBytes: fileStat?.size ?? null, configured: true, lastAttemptAt: status.lastAttemptAt ?? null, lastSuccessAt, result: status.result === 'SUCCESS' ? 'SUCCESS' : 'FAILURE', file: status.file ?? null, detail: status.detail ?? null, stale: ageHours === null || ageHours > 36, restoreInstructions };
     } catch {
-      return { configured: false, lastAttemptAt: null, lastSuccessAt: null, result: 'UNKNOWN', file: null, detail: 'No backup has been recorded yet. Run scripts\\backup-database.ps1 (schedule it daily).', stale: true, restoreInstructions };
+      return { destination: 'Local folder on the server (backups)', fileExists: false, fileSizeBytes: null, configured: false, lastAttemptAt: null, lastSuccessAt: null, result: 'UNKNOWN', file: null, detail: 'No backup has been recorded yet. Run scripts\\backup-database.ps1 (schedule it daily).', stale: true, restoreInstructions };
     }
   }
 }

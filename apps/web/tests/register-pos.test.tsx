@@ -106,10 +106,10 @@ describe('Cash tender, change due, Quick Add grid, and age check', () => {
     const grid = await screen.findByLabelText('Quick Add'); await within(grid).findByRole('button', { name: /^Item 1\$/ });
     expect(grid.querySelectorAll('.qa-grid > button')).toHaveLength(36);
     expect(grid.querySelectorAll('.qa-grid > *')).toHaveLength(36);
-    expect(within(grid).getByText('Page 1 of 2')).toBeTruthy();
+    expect(within(grid).getByText('1 / 2')).toBeTruthy();
     expect((within(grid).getByRole('button', { name: 'Previous Quick Add page' }) as HTMLButtonElement).disabled).toBe(true);
     await user.click(within(grid).getByRole('button', { name: 'Next Quick Add page' }));
-    expect(within(grid).getByText('Page 2 of 2')).toBeTruthy();
+    expect(within(grid).getByText('2 / 2')).toBeTruthy();
     expect(grid.querySelectorAll('.qa-grid > button')).toHaveLength(4);
     expect(grid.querySelectorAll('.qa-grid > *')).toHaveLength(36);
     await user.click(within(grid).getByRole('button', { name: /^Item 37\$/ }));

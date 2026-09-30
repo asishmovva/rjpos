@@ -24,7 +24,8 @@ export type VendorClaim = { id: string; kind: 'RETURN' | 'SHORTAGE' | 'DAMAGE' |
   creditReference: string | null; createdAt: string; vendor: { id: string; name: string }; lines: Array<{ id: string; quantity: number; unitCostMinor: string; variant: { id: string; name: string; sku: string; product: { name: string } } }> };
 export type AuditView = { items: Array<{ id: string; at: string; action: string; actionLabel: string; entityType: string; entityId: string; user: { id: string; name: string } | null; store: { id: string; name: string | null } | null; register: { id: string; name: string | null } | null;
   changes: Array<{ field: string; before: string | null; after: string | null }> }>; page: number; pageSize: number; total: number };
-export type BackupStatus = { configured: boolean; lastAttemptAt: string | null; lastSuccessAt: string | null; result: 'SUCCESS' | 'FAILURE' | 'UNKNOWN'; file: string | null; detail: string | null; stale: boolean; restoreInstructions: string[] };
+export type PromoAsset = { id: string; title: string; subtitle: string | null; imageData: string | null; active: boolean; sortOrder: number; startsAt: string | null; endsAt: string | null };
+export type BackupStatus = { destination: string; fileExists: boolean; fileSizeBytes: number | null; configured: boolean; lastAttemptAt: string | null; lastSuccessAt: string | null; result: 'SUCCESS' | 'FAILURE' | 'UNKNOWN'; file: string | null; detail: string | null; stale: boolean; restoreInstructions: string[] };
 
 export const phaseNineApi = {
   channels: () => adminRequest<SalesChannel[]>('/sales-channels'),
@@ -48,7 +49,10 @@ export const phaseNineApi = {
   velocity: (query: { storeId?: string; lookbackDays?: number; coverDays?: number; leadTimeDays?: number }) => adminRequest<VelocitySuggestion[]>(`/purchasing/velocity-suggestions${qs(query)}`),
   addBarcode: (variantId: string, barcodeValue: string) => adminRequest<{ id: string; barcodeValue: string }>(`/variants/${variantId}/barcodes`, post({ barcodeValue })),
   removeBarcode: (barcodeId: string) => adminRequest<{ removed: true }>(`/barcodes/${barcodeId}/remove`, post()),
-  audit: (query: { page?: number; action?: string; employeeId?: string; entityType?: string; from?: string; to?: string }) => adminRequest<AuditView>(`/audit-view${qs(query)}`),
+  audit: (query: { page?: number; action?: string; employeeId?: string; storeId?: string; entityType?: string; from?: string; to?: string }) => adminRequest<AuditView>(`/audit-view${qs(query)}`),
+  promos: () => adminRequest<PromoAsset[]>('/promo-assets'),
+  savePromo: (id: string | null, value: Partial<Omit<PromoAsset, 'id'>>) => id ? adminRequest<PromoAsset>(`/promo-assets/${id}`, patch(value)) : adminRequest<PromoAsset>('/promo-assets', post(value)),
+  deletePromo: (id: string) => adminRequest<{ deleted: true }>(`/promo-assets/${id}/delete`, post()),
   backupStatus: () => adminRequest<BackupStatus>('/system/backup-status'),
   revokeSessions: (employeeId: string) => adminRequest<{ revoked: true }>(`/employees/${employeeId}/revoke-sessions`, post()),
 };
@@ -61,6 +65,7 @@ export const phaseNineErrors: Record<string, string> = {
   CSV_IMPORT_HAS_ERRORS: 'Some rows have errors. Fix them, or choose to skip invalid rows.', CSV_EMPTY: 'The file is empty.', CSV_HEADERS_REQUIRED: 'The file is missing required columns.', CSV_TOO_MANY_ROWS: 'Files are limited to 5,000 rows.',
   CSV_DUPLICATE_HEADERS: 'Two columns have the same name.', BULK_SELECTION_REQUIRED: 'Select at least one product.', BULK_SELECTION_TOO_LARGE: 'Select up to 500 products at a time.', UPC_ALREADY_EXISTS: 'That code is already used by another item.',
   PRIMARY_BARCODE_PROTECTED: 'The main UPC cannot be removed.', INSUFFICIENT_INVENTORY: 'Not enough stock on hand for that return.', VENDOR_CLAIM_NOT_DRAFT: 'That claim has already been submitted.', SALES_CHANNEL_EXISTS: 'A channel with that name already exists.',
+  PROMO_IMAGE_INVALID: 'Use a PNG, JPEG, or WebP image under 600 KB.', PROMO_TITLE_INVALID: 'Enter a title (80 characters max).', PROMO_DATE_INVALID: 'The end must be after the start.', PROMO_LIMIT_REACHED: 'You have reached the promotion limit. Delete one first.',
   HTTP_403: 'You do not have permission for that.', SESSION_REVOKED: 'You were signed out. Sign in again.',
 };
 export const errorText = (cause: unknown): string => { const code = cause instanceof Error ? cause.message : ''; return phaseNineErrors[code] ?? (code && /^[A-Z0-9_]+$/.test(code) ? code.replace(/_/g, ' ').toLowerCase() : 'That did not work. Try again.'); };

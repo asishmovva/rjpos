@@ -217,3 +217,28 @@ describe.sequential('Audit viewer', () => {
     } finally { await prisma.$disconnect(); }
   });
 });
+
+describe.sequential('Customer display promotions', () => {
+  it('validates images and dates, and serves only active, in-window promotions in order', async () => {
+    const prisma = newPrisma();
+    try {
+      const { activePromoAssets, deletePromoAsset, savePromoAsset } = await import('../src/index.js');
+      const f = await fixture(prisma);
+      const png = 'data:image/png;base64,iVBORw0KGgo=';
+      await expect(savePromoAsset(prisma, f.admin, null, { title: '' })).rejects.toMatchObject({ code: 'PROMO_TITLE_INVALID' });
+      await expect(savePromoAsset(prisma, f.admin, null, { title: 'Bad', imageData: 'data:text/html;base64,PHNjcmlwdD4=' })).rejects.toMatchObject({ code: 'PROMO_IMAGE_INVALID' });
+      await expect(savePromoAsset(prisma, f.admin, null, { title: 'Bad dates', startsAt: '2026-02-01', endsAt: '2026-01-01' })).rejects.toBeTruthy();
+      const second = await savePromoAsset(prisma, f.admin, null, { title: 'Second', sortOrder: 2, imageData: png });
+      const first = await savePromoAsset(prisma, f.admin, null, { title: 'First', subtitle: 'Cold beer', sortOrder: 1 });
+      await savePromoAsset(prisma, f.admin, null, { title: 'Expired', sortOrder: 0, endsAt: new Date(Date.now() - 86_400_000).toISOString() });
+      await savePromoAsset(prisma, f.admin, null, { title: 'Future', sortOrder: 0, startsAt: new Date(Date.now() + 86_400_000).toISOString() });
+      await savePromoAsset(prisma, f.admin, null, { title: 'Off', sortOrder: 0, active: false });
+      expect((await activePromoAssets(prisma, f.organizationId)).map((promo) => promo.title)).toEqual(['First', 'Second']);
+      await savePromoAsset(prisma, f.admin, first.id, { active: false });
+      expect((await activePromoAssets(prisma, f.organizationId)).map((promo) => promo.title)).toEqual(['Second']);
+      await deletePromoAsset(prisma, f.admin, second.id);
+      expect(await activePromoAssets(prisma, f.organizationId)).toEqual([]);
+      await expect(savePromoAsset(prisma, { ...f.admin, organizationId: randomUUID() }, first.id, { title: 'Other org' })).rejects.toMatchObject({ code: 'PROMO_NOT_FOUND' });
+    } finally { await prisma.$disconnect(); }
+  });
+});

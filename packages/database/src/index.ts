@@ -197,3 +197,4 @@ export { applyBulkOperation, previewBulkOperation, type BulkChange, type BulkOpe
 export { CSV_KINDS, commitCsvImport, exportCsv, previewCsvImport, type CsvKind, type ImportPreview, type ImportRow } from './csv-tools.js';
 export { listAuditView, type AuditChange } from './audit-viewer.js';
 export { revokeEmployeeSessions } from './back-office.js';
+export { activePromoAssets, deletePromoAsset, listPromoAssets, savePromoAsset, type PromoInput } from './promo-assets.js';

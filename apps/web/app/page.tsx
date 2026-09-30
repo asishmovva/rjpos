@@ -7,6 +7,9 @@ import { api, adjustmentToDiscount, friendlyError, getApiSessionToken, loadStore
 import { CartLine } from './cart-line';
 import { InventoryView } from './inventory-view';
 import { LockScreen } from './register-lock';
+import { answerDisplayRequests, emptyDisplayState, publishDisplay, type DisplayPromo, type DisplayState } from './display-channel';
+import { BrandMark } from './brand';
+import { SupportButton } from './support';
 import { AgeCheckDialog, CashOperationsDialog, cashKindNeedsApproval, CustomerCreateForm, CustomerDialog, DiscountDialog, ElevationDialog, GiftCardDialog, isElevationActive, OpenRegisterDialog, SaleCompleteDialog, ShiftReportView, TenderDialog, type CashKind, type Elevation, type SaleSummary, type ShiftReport } from './register-dialogs';
 type CatalogItem = {
   variantId: string;
@@ -122,6 +125,12 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
   const [returnDispositions, setReturnDispositions] = useState<Record<string, ReturnDisposition>>({});
   const [quickPage, setQuickPage] = useState(0);
   const [saleSummary, setSaleSummary] = useState<SaleSummary | null>(null);
+  const [displayEvent, setDisplayEvent] = useState<{ kind: 'processing' } | { kind: 'complete'; totalMinor: string } | null>(null);
+  const [promos, setPromos] = useState<DisplayPromo[]>([]);
+  const displayState = useRef<DisplayState>(emptyDisplayState());
+  // Card availability is reported by the register app (production has no provider until one is certified).
+  const [cardMode, setCardMode] = useState<'live' | 'simulated' | 'unavailable'>('simulated');
+  useEffect(() => { void window.rjpos?.hardwareStatus().then((status) => setCardMode(status.terminal === 'ready' ? 'live' : status.terminal === 'unavailable' ? 'unavailable' : 'simulated')).catch(() => undefined); }, []);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [storeTimezone, setStoreTimezone] = useState<string | undefined>(undefined);
   const ageRef = useRef(false);
@@ -345,6 +354,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
     if (cart.some((line) => line.ageRestricted) && !ageRef.current) { pendingAction.current = () => void checkout(kind, tendered); setUtility('age'); return; }
     if (adjustments.active && session.role === 'CASHIER' && !currentElevation()) { requireElevation('Approve the discount to complete this sale.', () => void checkout(kind, tendered)); return; }
     try {
+      setDisplayEvent({ kind: 'processing' });
       const result = await api<{ orderId: string; tenderedMinor?: string; changeDueMinor?: string }>(`/checkout/${kind}`, {
         method: 'POST',
         ...(adjustments.active ? withApproval() : {}),
@@ -365,6 +375,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
         if (!drawerResult.ok) setMessage(`Sale complete. ${drawerResult.message}`);
       }
     } catch (error) {
+      setDisplayEvent(null);
       setMessage(kind === 'terminal' && error instanceof Error && error.message.includes('cannot reach') ? 'Payment status is unknown. Do not retry until the order is checked.' : error instanceof Error ? error.message : 'Checkout failed');
     }
   }
@@ -383,6 +394,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
     clearAdjustments();
     setOverrideReason('');
     setMessage('Sale complete. Receipt ready to print.');
+    setDisplayEvent({ kind: 'complete', totalMinor: sold.totalMinor });
   }
   async function findCustomers(): Promise<void> {
     try {
@@ -416,6 +428,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
       const rawRemainder = total - benefit;
       if (kind === 'TERMINAL' && rawRemainder <= 0n) throw new Error('TERMINAL_AMOUNT_REQUIRED');
       const remainder = rawRemainder < 0n ? 0n : rawRemainder;
+      setDisplayEvent({ kind: 'processing' });
       const result = await api<{ orderId: string; tenderedMinor?: string; changeDueMinor?: string }>('/checkout/mixed', {
         method: 'POST',
         ...(adjustments.active ? withApproval() : {}),
@@ -438,6 +451,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
       });
       await finishSale(result.orderId, kind === 'CASH' ? { tenderedMinor: result.tenderedMinor ?? remainder.toString(), changeDueMinor: result.changeDueMinor ?? '0' } : undefined);
     } catch (error) {
+      setDisplayEvent(null);
       setMessage(error instanceof Error ? error.message : 'Split checkout failed');
     }
   }
@@ -604,11 +618,37 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
   const activeQuickPage = Math.min(quickPage, quickPages - 1);
   const pageKeys = groupKeys.slice(activeQuickPage * QUICK_PAGE_SIZE, (activeQuickPage + 1) * QUICK_PAGE_SIZE);
 
+  // Customer display: promotions refresh every 5 minutes; state is broadcast to the second window on every change.
+  useEffect(() => {
+    let active = true;
+    const load = () => void api<DisplayPromo[]>('/customer-display/promotions').then((list) => { if (active && Array.isArray(list)) setPromos(list); }).catch(() => undefined);
+    load(); const timer = window.setInterval(load, 300_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+  useEffect(() => {
+    if (displayEvent?.kind !== 'complete' || saleSummary) return undefined;
+    const timer = window.setTimeout(() => setDisplayEvent(null), 7_000);
+    return () => window.clearTimeout(timer);
+  }, [displayEvent, saleSummary]);
+  useEffect(() => {
+    const phase: DisplayState['phase'] = displayEvent?.kind === 'processing' ? 'processing'
+      : displayEvent?.kind === 'complete' ? (saleSummary ? 'cash-complete' : 'thanks')
+      : utility === 'age' && cart.length ? 'age' : cart.length ? 'sale' : 'idle';
+    const next: DisplayState = {
+      phase, storeName, promos, itemCount: cart.reduce((sum, line) => sum + line.quantity, 0),
+      lines: cart.map((line) => ({ id: line.variantId, name: line.productName, detail: line.variantName, quantity: line.quantity, totalMinor: line.priceMinor === null ? '0' : (BigInt(line.priceMinor) * BigInt(line.quantity)).toString() })),
+      subtotalMinor: subtotal.toString(), taxMinor: projectedTax.toString(), discountMinor: discount.toString(), totalMinor: displayEvent?.kind === 'complete' ? displayEvent.totalMinor : total.toString(),
+      ...(saleSummary ? { tenderedMinor: saleSummary.tenderedMinor, changeDueMinor: saleSummary.changeDueMinor } : {}),
+    };
+    displayState.current = next; publishDisplay(next);
+  }, [cart, subtotal, projectedTax, discount, total, displayEvent, saleSummary, utility, storeName, promos]);
+  useEffect(() => answerDisplayRequests(() => displayState.current), []);
+
   return (
     <main className="shell">
       <header className="topbar">
         <div>
-          <span className="eyebrow">RJ POS</span>
+          <BrandMark />
           <h1>{storeName} Register</h1>
         </div>
         <div className={`status ${sessionId ? 'open' : ''}`}>
@@ -626,6 +666,8 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
           <button onClick={() => setView('inventory')}>Inventory</button>
           <button onClick={() => void loadHistory()}>Orders</button>
           <button onClick={onLock}>Lock</button>
+          <button onClick={() => { if (window.rjpos?.toggleCustomerDisplay) void window.rjpos.toggleCustomerDisplay(); else window.open('/customer-display/', 'rjpos-customer-display', 'popup,width=1100,height=640'); }}>Display</button>
+          <SupportButton />
         </nav>
       </header>
       {view === 'register' && (<>
@@ -704,9 +746,15 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
             <section className="quick-keys" aria-label="Quick Add">
               <div className="quick-title">
                 <h2>Quick Add</h2>
+                <select className="quick-group-select" aria-label="Quick Add group" value={quickGroup} onChange={(event) => { setQuickGroup(event.target.value); setQuickPage(0); }}><option value="All">All</option>{[...new Set(quickKeys.map((key) => key.groupName))].map((group) => <option key={group} value={group}>{group}</option>)}</select>
                 <div className="quick-groups">
                   <button className={quickGroup === 'All' ? 'active' : ''} onClick={() => { setQuickGroup('All'); setQuickPage(0); }}>All</button>
                   {[...new Set(quickKeys.map((key) => key.groupName))].map((group) => <button className={quickGroup === group ? 'active' : ''} key={group} onClick={() => { setQuickGroup(group); setQuickPage(0); }}>{group}</button>)}
+                </div>
+                <div className="qa-pager">
+                  <button aria-label="Previous Quick Add page" disabled={activeQuickPage === 0} onClick={() => setQuickPage(activeQuickPage - 1)}><span aria-hidden="true">‹</span><span className="pg-word"> Prev</span></button>
+                  <span aria-live="polite">{activeQuickPage + 1} / {quickPages}</span>
+                  <button aria-label="Next Quick Add page" disabled={activeQuickPage >= quickPages - 1} onClick={() => setQuickPage(activeQuickPage + 1)}><span className="pg-word">Next </span><span aria-hidden="true">›</span></button>
                 </div>
                 <button className="text" onClick={() => requireElevation('Approve managing Quick Add buttons.', () => window.location.assign('/admin/register-settings/'))}>Manage</button>
               </div>
@@ -719,13 +767,6 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
                     : <span key={`empty-${index}`} className="qa-empty" aria-hidden="true" />;
                 })}
               </div>
-              {quickPages > 1 && (
-                <div className="qa-pager">
-                  <button aria-label="Previous Quick Add page" disabled={activeQuickPage === 0} onClick={() => setQuickPage(activeQuickPage - 1)}>‹ Prev</button>
-                  <span aria-live="polite">Page {activeQuickPage + 1} of {quickPages}</span>
-                  <button aria-label="Next Quick Add page" disabled={activeQuickPage >= quickPages - 1} onClick={() => setQuickPage(activeQuickPage + 1)}>Next ›</button>
-                </div>
-              )}
             </section>
             <section className="payment" aria-label="Payment">
               {(customer || giftApplied || loyaltyPoints > 0) && (
@@ -737,7 +778,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
               <div className="totals" aria-label="Sale totals">
                 <div className="totals-detail">
                   <span>Subtotal <b>{money(subtotal)}</b></span>
-                  {discount > 0n && <span>{adjustments.active ? 'Discounts' : 'Promotions'} <b>−{money(discount)}</b></span>}
+                  <span className={discount > 0n ? '' : 'zero'}>Discount <b>{discount > 0n ? '−' : ''}{money(discount)}</b></span>
                   <span>Tax <b>{money(projectedTax)}</b></span>
                 </div>
                 <div className="total"><span>Total</span><b>{money(total)}</b></div>
@@ -753,7 +794,7 @@ function RegisterWorkspace({ session, onLock }: { session: RegisterSession; onLo
                 <div className={`change${shortBy > 0n ? ' short' : ''}`}><span>{shortBy > 0n ? 'Still due' : 'Change due'}</span><b>{money(shortBy > 0n ? shortBy : changeDue)}</b></div>
               </div>
               <div className="pay-buttons">
-                <button className="pay card" disabled={!cart.length || !sessionId} onClick={() => void checkout('terminal')}>CARD</button>
+                <button className="pay card" disabled={!cart.length || !sessionId || cardMode === 'unavailable'} onClick={() => void checkout('terminal')} title={cardMode === 'unavailable' ? 'No card payment provider is configured. Use cash.' : cardMode === 'simulated' ? 'Simulated card payment: no real charge is made.' : undefined}>CARD{cardMode !== 'live' && <small>{cardMode === 'unavailable' ? 'Unavailable' : 'Simulated'}</small>}</button>
                 <button className="pay cash" disabled={!cart.length || !sessionId || shortBy > 0n} onClick={() => void checkout('cash', cashTendered || total.toString())}>CASH</button>
               </div>
               {splitActive && (

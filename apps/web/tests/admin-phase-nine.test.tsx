@@ -12,8 +12,8 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); saveAdmi
 
 describe('Back-office sign-in gate', () => {
   it('passes through in development and never sends the owner header in production', () => {
-    render(<AdminGate><p>Dashboard</p></AdminGate>);
-    expect(screen.getByText('Dashboard')).toBeTruthy();
+    render(<AdminGate><p>Guarded page</p></AdminGate>);
+    expect(screen.getByText('Guarded page')).toBeTruthy();
     expect(adminHeaders()).toEqual({ 'x-rjpos-role': 'OWNER' });
     vi.stubEnv('NEXT_PUBLIC_RJPOS_AUTH_MODE', 'production');
     expect(adminHeaders()['x-rjpos-role']).toBeUndefined();
@@ -28,13 +28,13 @@ describe('Back-office sign-in gate', () => {
       return json({ error: { code: 'LOGIN_PIN_INVALID' } }, 401);
     });
     vi.stubGlobal('fetch', fetchMock);
-    const user = userEvent.setup(); render(<AdminGate><p>Dashboard</p></AdminGate>);
-    expect(screen.queryByText('Dashboard')).toBeNull();
+    const user = userEvent.setup(); render(<AdminGate><p>Guarded page</p></AdminGate>);
+    expect(screen.queryByText('Guarded page')).toBeNull();
     await user.type(await screen.findByLabelText('PIN'), '1111'); await user.click(screen.getByRole('button', { name: 'Sign in' }));
     expect(await screen.findByText('Back office needs a Manager or Owner PIN.')).toBeTruthy();
-    expect(screen.queryByText('Dashboard')).toBeNull();
+    expect(screen.queryByText('Guarded page')).toBeNull();
     await user.clear(screen.getByLabelText('PIN')); await user.type(screen.getByLabelText('PIN'), '1234'); await user.click(screen.getByRole('button', { name: 'Sign in' }));
-    expect(await screen.findByText('Dashboard')).toBeTruthy();
+    expect(await screen.findByText('Guarded page')).toBeTruthy();
     expect(adminHeaders()).toMatchObject({ 'x-rjpos-session': 'owner-token' });
   });
 });

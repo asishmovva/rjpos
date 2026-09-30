@@ -15,6 +15,7 @@ export default function BulkPage(): React.ReactNode {
   const [stores, setStores] = useState<Store[]>([]); const [categories, setCategories] = useState<Category[]>([]); const [vendors, setVendors] = useState<Vendor[]>([]); const [profiles, setProfiles] = useState<TaxProfile[]>([]);
   const [kind, setKind] = useState<Kind>('PRICE'); const [storeId, setStoreId] = useState(''); const [mode, setMode] = useState<'PERCENT' | 'AMOUNT' | 'SET'>('PERCENT'); const [value, setValue] = useState('');
   const [taxProfileId, setTaxProfileId] = useState(''); const [categoryId, setCategoryId] = useState(''); const [vendorId, setVendorId] = useState(''); const [active, setActive] = useState(true); const [low, setLow] = useState(''); const [target, setTarget] = useState('');
+  const [confirmed, setConfirmed] = useState(false); const [result, setResult] = useState('');
   const [plan, setPlan] = useState<BulkPlan | null>(null); const [error, setError] = useState(''); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false);
   useEffect(() => {
     void Promise.all([adminApi.stores(), adminApi.categories(), adminApi.vendors(), costingApi.taxProfiles()]).then(([storeList, categoryList, vendorList, tax]) => {
@@ -39,18 +40,21 @@ export default function BulkPage(): React.ReactNode {
     return { type: 'THRESHOLDS', storeId, ...(lowValue === undefined ? {} : { lowStockThreshold: lowValue }), ...(targetValue === undefined ? {} : { reorderTarget: targetValue }) };
   }, [kind, storeId, mode, value, taxProfileId, categoryId, vendorId, active, low, target]);
   const ids = [...selected.keys()];
-  useEffect(() => { setPlan(null); }, [operation, selected]);
+  useEffect(() => { setPlan(null); setConfirmed(false); }, [operation, selected]);
+  const step = result ? 5 : plan ? 3 : selected.size > 0 && operation ? 3 : selected.size > 0 ? 2 : 1;
 
   async function run(apply: boolean): Promise<void> {
     if (!operation) return; setBusy(true); setError(''); setMessage('');
     try {
-      if (apply) { const result = await phaseNineApi.bulkApply(ids, operation); setMessage(`Applied to ${result.applicable} item${result.applicable === 1 ? '' : 's'}${result.skipped ? `, ${result.skipped} skipped` : ''}.`); setPlan(null); setSelected(new Map()); }
+      if (apply) { const result = await phaseNineApi.bulkApply(ids, operation); setMessage(''); setResult(`Applied to ${result.applicable} item${result.applicable === 1 ? '' : 's'}${result.skipped ? `, ${result.skipped} skipped` : ''}. Every change is in the audit log.`); setPlan(null); setSelected(new Map()); }
       else setPlan(await phaseNineApi.bulkPreview(ids, operation));
     } catch (cause) { setError(errorText(cause)); } finally { setBusy(false); }
   }
   return <main className="admin-main costing-page">
     <header className="admin-heading"><div><a href="/admin/">← Back Office</a><span className="eyebrow">Catalog</span><h1>Bulk changes</h1></div></header>
     <p className="hint">Changes apply to the products you select, only after you review them. Stock on hand is never changed here; use counts and adjustments for that.</p>
+    <ol className="steps" aria-label="Progress">{['Select', 'Configure change', 'Preview', 'Apply', 'Result'].map((label, at) => <li key={label} className={at + 1 === step || (at === 3 && plan && !result) ? 'on' : at + 1 < step ? 'done' : ''}>{at + 1}. {label}</li>)}</ol>
+    {result && <section className="wizard-section" aria-label="Result"><h2>5. Result</h2><p className="admin-alert success">{result}</p><div className="wizard-actions"><span /><button className="big" onClick={() => setResult('')}>Make another change</button></div></section>}
     {error && <p className="admin-alert error" role="alert">{error}</p>}{message && <p className="admin-alert success">{message}</p>}
     <section className="wizard-section" aria-label="Select products"><h2>1. Select products ({selected.size})</h2>
       <div className="inline-form"><label>Search<input aria-label="Search products" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name, brand, SKU, or UPC" /></label>
@@ -71,9 +75,10 @@ export default function BulkPage(): React.ReactNode {
         {kind === 'ACTIVE' && <label>Set to<select aria-label="Active state" value={active ? 'yes' : 'no'} onChange={(event) => setActive(event.target.value === 'yes')}><option value="yes">Active</option><option value="no">Inactive</option></select></label>}
         {kind === 'THRESHOLDS' && <><label>Low-stock threshold<input aria-label="Low-stock threshold" inputMode="numeric" value={low} onChange={(event) => setLow(event.target.value.replace(/\D/g, ''))} /></label><label>Reorder target<input aria-label="Reorder target" inputMode="numeric" value={target} onChange={(event) => setTarget(event.target.value.replace(/\D/g, ''))} /></label></>}
         <button className="primary" disabled={busy || !operation || ids.length === 0} onClick={() => void run(false)}>Preview changes</button></div></section>
-    {plan && <section className="wizard-section" aria-label="Preview"><h2>3. Review</h2>
+    {plan && <section className="wizard-section" aria-label="Preview"><h2>3. Preview</h2>
       <p>{plan.applicable} will change, {plan.skipped} will be skipped.</p>
       <table className="line-table"><thead><tr><th>Item</th><th>Before</th><th>After</th><th /></tr></thead><tbody>{plan.changes.map((change) => <tr key={change.id} className={change.skip ? 'muted' : ''}><td>{change.label}</td><td>{change.before}</td><td>{change.skip ? '—' : change.after}</td><td>{change.skip ?? ''}</td></tr>)}</tbody></table>
-      <div className="wizard-actions"><button onClick={() => setPlan(null)}>Cancel</button><button className="big" disabled={busy || plan.applicable === 0} onClick={() => void run(true)}>Apply to {plan.applicable} item{plan.applicable === 1 ? '' : 's'}</button></div></section>}
+      <label className="check"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /> I reviewed the {plan.applicable} change{plan.applicable === 1 ? '' : 's'} above and want to apply them.</label>
+      <div className="wizard-actions"><button onClick={() => setPlan(null)}>Cancel</button><button className="big" disabled={busy || plan.applicable === 0 || !confirmed} onClick={() => void run(true)}>4. Apply to {plan.applicable} item{plan.applicable === 1 ? '' : 's'}</button></div></section>}
   </main>;
 }

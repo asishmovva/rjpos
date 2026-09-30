@@ -1,0 +1,22 @@
+.cd{position:fixed;inset:0;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(360px,1fr);background:#0f1f19;color:#fff;font-family:Inter,ui-sans-serif,system-ui,sans-serif;overflow:hidden}
+.cd-stage{position:relative;display:grid;place-items:center;background:linear-gradient(145deg,#173f31,#0d2a20);overflow:hidden}
+.cd-promo{position:absolute;inset:0;animation:cd-fade .8s ease both}.cd-promo img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.cd-promo-text{position:absolute;left:0;right:0;bottom:0;padding:56px 48px 64px;background:linear-gradient(transparent,#000c)}
+.cd-promo-text h2{margin:0 0 8px;font-size:clamp(34px,5vw,64px);line-height:1.05;letter-spacing:-.01em}.cd-promo-text p{margin:0;font-size:clamp(18px,2.2vw,30px);color:#e3efe8}
+.cd-promo:not(:has(img)){display:grid;place-items:center;text-align:center}.cd-promo:not(:has(img)) .cd-promo-text{position:static;background:none;padding:48px}
+.cd-welcome{text-align:center;padding:48px}.cd-logo{width:clamp(96px,14vw,180px);aspect-ratio:1;border-radius:28px;background:#d29b3d;color:#14261e;display:grid;place-items:center;font-size:clamp(48px,8vw,100px);font-weight:900;margin:0 auto 28px}
+.cd-welcome h2{margin:0;font-size:clamp(36px,5vw,68px)}.cd-welcome p{margin:14px 0 0;font-size:clamp(18px,2vw,28px);color:#b8cfc4}
+.cd-dots{position:absolute;bottom:22px;left:0;right:0;display:flex;justify-content:center;gap:10px}.cd-dots span{width:10px;height:10px;border-radius:50%;background:#ffffff55}.cd-dots span.on{background:#d29b3d;width:28px;border-radius:6px}
+.cd-order{display:flex;flex-direction:column;background:#fff;color:#14261e;min-width:0;min-height:0}
+.cd-order header{display:flex;justify-content:space-between;align-items:baseline;padding:26px 30px 14px;border-bottom:2px solid #e3efe8}.cd-order header h2{margin:0;font-size:30px}.cd-order header span{font-size:20px;color:#5b6b63;font-weight:700}
+.cd-banner{margin:14px 30px 0;padding:14px 18px;border-radius:12px;font-size:24px;font-weight:800;text-align:center}.cd-banner.age{background:#fff0d7;color:#7a4a00}.cd-banner.processing{background:#dcebe3;color:#14523a}
+.cd-empty{flex:1;display:grid;place-items:center;color:#7a877f;font-size:24px;padding:30px;text-align:center}
+.cd-lines{flex:1;min-height:0;overflow-y:auto;list-style:none;margin:0;padding:8px 30px}.cd-lines li{display:flex;justify-content:space-between;gap:18px;padding:14px 0;border-bottom:1px solid #edf1ee;align-items:flex-start}
+.cd-lines strong{display:block;font-size:26px;line-height:1.15}.cd-lines small{display:block;color:#5b6b63;font-size:19px;margin-top:2px}.cd-lines b{font-size:28px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.cd-order footer{padding:16px 30px 26px;border-top:2px solid #e3efe8;background:#f4f8f5}.cd-row{display:flex;justify-content:space-between;font-size:24px;padding:3px 0;color:#3d4d44}.cd-row b{font-variant-numeric:tabular-nums;color:#14261e}.cd-row.save,.cd-row.save b{color:#14523a;font-weight:800}
+.cd-total{display:flex;justify-content:space-between;align-items:baseline;margin-top:10px;padding:14px 20px;border-radius:14px;background:#163f31;color:#fff}.cd-total span{font-size:28px;text-transform:uppercase;letter-spacing:.08em}.cd-total b{font-size:clamp(48px,6vw,84px);line-height:1;font-variant-numeric:tabular-nums}
+.cd-thanks{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;background:linear-gradient(145deg,#173f31,#0d2a20)}.cd-thanks h1{margin:0;font-size:clamp(52px,8vw,110px)}.cd-thanks p{margin:0;font-size:32px;color:#cfe0d7}
+.cd-change{font-size:clamp(96px,18vw,260px);font-weight:900;line-height:1;color:#d29b3d;font-variant-numeric:tabular-nums}.cd-paid{display:flex;gap:26px;align-items:baseline;font-size:34px;color:#cfe0d7}.cd-paid b{color:#fff;font-size:48px;font-variant-numeric:tabular-nums}.cd-sub{font-size:26px!important}
+@keyframes cd-fade{from{opacity:0}to{opacity:1}}
+@media(max-width:900px){.cd{grid-template-columns:1fr;grid-template-rows:38% 62%}}
+@media(prefers-reduced-motion:reduce){.cd-promo{animation:none}}

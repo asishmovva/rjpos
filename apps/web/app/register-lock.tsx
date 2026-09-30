@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { BrandMark } from './brand';
+import { SupportButton } from './support';
 import { api, friendlyError, type RegisterSession } from './register-api';
 
 /** PIN sign-in shown whenever nobody is signed in. The PIN is verified by the API; nothing is checked here. */
@@ -17,7 +19,7 @@ export function LockScreen({ onSignedIn }: { onSignedIn: (session: RegisterSessi
   }
   return <main className="lock-screen">
     <form className="lock-card" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-      <span className="eyebrow">RJ POS</span>
+      <BrandMark size={40} />
       <h1>Downtown Register</h1>
       <p>Enter your PIN to sign in.</p>
       <div className="pin-dots" aria-hidden="true">{Array.from({ length: 8 }, (_, index) => <span key={index} className={index < pin.length ? 'filled' : ''} />)}</div>
@@ -31,5 +33,6 @@ export function LockScreen({ onSignedIn }: { onSignedIn: (session: RegisterSessi
       </div>
       <button className="primary" disabled={pin.length < 4 || busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
     </form>
+    <div className="lock-support"><SupportButton /></div>
   </main>;
 }
