@@ -21,7 +21,7 @@ function Text({ doc, field, label, disabled, save, kind = 'text' }: { doc: Heade
 }
 
 /** Every header field a distributor may print, all optional. Vendor-specific extras and regulatory/remittance details are kept as notes, not required. */
-export function HeaderForm({ doc, vendors, disabled, onSave }: { doc: HeaderDoc; vendors: Vendor[]; disabled: boolean; onSave: (body: Record<string, unknown>) => void }): React.ReactNode {
+export function HeaderForm({ doc, vendors, disabled, onSave, purchaseOrders = [] }: { doc: HeaderDoc; vendors: Vendor[]; disabled: boolean; onSave: (body: Record<string, unknown>) => void; purchaseOrders?: Array<{ id: string; poNumber: string; status: string }> }): React.ReactNode {
   const props = { doc, disabled, save: onSave };
   const extras = Array.isArray(doc.vendorExtras) ? (doc.vendorExtras as Array<{ label: string; value: string }>) : [];
   return <div className="rt-grid" aria-label="Invoice header">
@@ -34,7 +34,8 @@ export function HeaderForm({ doc, vendors, disabled, onSave }: { doc: HeaderDoc;
     </fieldset>
     <fieldset><legend>Document</legend>
       <label className="rt-field">Document type<select aria-label="Document type" disabled={disabled} value={doc.docType} onChange={(event) => onSave({ docType: event.target.value })}>{DOC_TYPES.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
-      <Text {...props} field="invoiceNumber" label="Invoice #" /><Text {...props} field="invoiceDate" label="Invoice date" kind="date" /><Text {...props} field="orderNumber" label="Order #" /><Text {...props} field="poReference" label="PO # / reference" /><Text {...props} field="documentNumber" label="Document #" />
+      <Text {...props} field="invoiceNumber" label="Invoice #" /><Text {...props} field="invoiceDate" label="Invoice date" kind="date" /><Text {...props} field="orderNumber" label="Order #" /><Text {...props} field="poReference" label="PO # / reference (as printed)" />
+      <label className="rt-field">Compare with RJ POS purchase order<select aria-label="Purchase order" disabled={disabled} value={typeof doc.purchaseOrderId === 'string' ? doc.purchaseOrderId : ''} onChange={(event) => onSave({ purchaseOrderId: event.target.value || null })}><option value="">None (ordered outside RJ POS)</option>{purchaseOrders.map((po) => <option key={po.id} value={po.id}>{po.poNumber} · {po.status.toLowerCase().replace('_', ' ')}</option>)}</select><small>Optional. Receiving works without one.</small></label><Text {...props} field="documentNumber" label="Document #" />
       <Text {...props} field="shipDate" label="Ship date" kind="date" /><Text {...props} field="deliveryDate" label="Delivery date" kind="date" /><Text {...props} field="dueDate" label="Due date" kind="date" />
       <Text {...props} field="routeReference" label="Route / reference" /><Text {...props} field="salesperson" label="Salesperson / rep" /><Text {...props} field="customerTerms" label="Customer terms" /><Text {...props} field="paymentTerms" label="Payment terms (e.g. NET 30)" />
     </fieldset>

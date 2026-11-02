@@ -33,6 +33,7 @@ export default function InvoicesPage(): React.ReactNode {
   const [matches, setMatches] = useState<Record<string, string>>({});
   const [drafts, setDrafts] = useState<Record<string, NewProductDraft>>({});
   const [review, setReview] = useState<FullReview | null>(null);
+  const [openOrders, setOpenOrders] = useState<Array<{ id: string; poNumber: string; status: string }>>([]);
   const [step, setStep] = useState<'header' | 'match' | 'costs' | 'confirm'>('header');
   const [newLine, setNewLine] = useState({ kind: 'PRODUCT', description: '', vendorItem: '', upc: '', units: '12', cases: '1', caseCost: '', amount: '' });
   const refreshReview = async (id: string) => { try { setReview(await receivingApi.review(id)); } catch { setReview(null); } };
@@ -47,6 +48,7 @@ export default function InvoicesPage(): React.ReactNode {
     setInvoices(invoiceRows); setVendors(vendorRows.items); setStores(storeRows); setCategories(categoryRows.items); setInventory(inventoryRows.items);
     setStoreId((current) => current || storeRows[0]?.id || '');
   }
+  useEffect(() => { if (!document?.vendor?.id) { setOpenOrders([]); return; } void adminApi.purchaseOrders('', '', document.store.id).then((result) => setOpenOrders(result.items.filter((po) => (po as unknown as { vendor?: { id: string } }).vendor?.id === document.vendor?.id && ['SUBMITTED', 'PARTIALLY_RECEIVED'].includes(po.status)).map((po) => ({ id: po.id, poNumber: po.poNumber, status: po.status })))).catch(() => setOpenOrders([])); }, [document?.vendor?.id, document?.store.id]);
   useEffect(() => { void load().catch((cause) => setError(cause instanceof Error ? cause.message : 'Could not load invoices.')); }, []);
   async function run(operation: () => Promise<InvoiceDocument>, success: string): Promise<void> {
     setBusy(true); setError(''); setMessage('');
@@ -128,7 +130,7 @@ export default function InvoicesPage(): React.ReactNode {
       </div>
       <ol className="steps" aria-label="Receiving steps">{([['header', '1. Header'], ['match', '2. Match products'], ['costs', '3. Costs & receiving'], ['confirm', '4. Reconcile & confirm']] as const).map(([id, label]) => <li key={id} className={step === id ? 'on' : ''}><button className="text" onClick={() => setStep(id)} aria-current={step === id ? 'step' : undefined}>{label}</button></li>)}</ol>
       {review && review.receiving.blockers.length > 0 && step !== 'confirm' && <p className="discrepancy error" role="status">⛔ {review.receiving.blockers[0]!.message} <button className="text" onClick={() => setStep('confirm')}>See all</button></p>}
-      {step === 'header' && <HeaderForm doc={document as unknown as HeaderDoc} vendors={vendors} disabled={busy || document.reviewStatus !== 'DRAFT'} onSave={(body) => void saveHeader(body)} />}
+      {step === 'header' && <HeaderForm doc={document as unknown as HeaderDoc} vendors={vendors} purchaseOrders={openOrders} disabled={busy || document.reviewStatus !== 'DRAFT'} onSave={(body) => void saveHeader(body)} />}
       {step === 'match' && <div className="admin-table-wrap"><table><thead><tr><th>Status</th><th>Extracted item</th><th>Qty / pack</th><th>Cost</th><th>Product decision</th><th /></tr></thead><tbody>
         {document.lines.map((line) => {
           const draft = drafts[line.id] ?? { ...emptyDraft, categoryId: categories[0]?.id ?? '', productName: line.description, sku: `INV-${line.lineNumber}`, barcode: line.upc ?? '' };
