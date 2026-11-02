@@ -52,3 +52,22 @@ export {
   type CartLineInput,
   type CartTotals,
 } from './cart.js';
+export {
+  assessCostChange,
+  compareOrderInvoiceReceipt,
+  normalizeVendorLabel,
+  reconcileInvoice,
+  resolveLineEconomics,
+  resolveQuantities,
+  type CanonicalField,
+  type ComparisonFlag,
+  type CostChange,
+  type FieldScope,
+  type LabelMapping,
+  type LineEconomics,
+  type LineEconomicsInput,
+  type QuantityInput,
+  type QuantityResolution,
+  type Reconciliation,
+  type ReconciliationInput,
+} from './invoice-receiving.js';

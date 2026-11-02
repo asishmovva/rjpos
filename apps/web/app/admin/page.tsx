@@ -1777,7 +1777,7 @@ function VendorsView({ rows, run }: { rows: Vendor[]; run: (operation: () => Pro
         {rows.map((vendor) => (
           <tr key={vendor.id}>
             <td>
-              <strong>{vendor.name}</strong>
+              <strong><a href={`/admin/vendor/?id=${vendor.id}`}>{vendor.name}</a></strong>
               {vendor.addressJson?.city && (
                 <small>
                   {vendor.addressJson.city}

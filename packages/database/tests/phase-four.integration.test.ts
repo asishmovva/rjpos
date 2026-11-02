@@ -194,8 +194,10 @@ suite('Phase 4 master catalog, vendors, purchase orders, and receiving with Post
         where: { organizationId_storeId_variantId: { organizationId: f.organizationId, storeId: f.storeId, variantId: f.variantId } },
       });
       expect(level.onHand).toBe(3);
-      const movements = await f.prisma.inventoryMovement.findMany({ where: { organizationId: f.organizationId, type: 'PURCHASE_RECEIPT' } });
+      // Everything delivered and not rejected is received, and damaged units are written off with their own DAMAGE movement.
+      const movements = await f.prisma.inventoryMovement.findMany({ where: { organizationId: f.organizationId, type: { in: ['PURCHASE_RECEIPT', 'DAMAGE'] } } });
       expect(movements.reduce((sum, movement) => sum + movement.quantityDelta, 0)).toBe(3);
+      expect(movements.filter((movement) => movement.type === 'DAMAGE').reduce((sum, movement) => sum + movement.quantityDelta, 0)).toBe(-1);
       expect(movements.every((movement) => movement.referenceType === 'PURCHASE_RECEIPT')).toBe(true);
       expect(await f.prisma.auditRecord.count({ where: { organizationId: f.organizationId, action: 'PURCHASE_ORDER_RECEIVED' } })).toBe(2);
       expect(await f.prisma.outboxEvent.count({ where: { organizationId: f.organizationId, eventType: 'PURCHASE_ORDER_RECEIPT_POSTED' } })).toBe(2);

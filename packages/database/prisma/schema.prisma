@@ -299,6 +299,8 @@ model Organization {
   dayCloses              DayClose[]
   salesChannels          SalesChannel[]
   promoAssets            PromoAsset[]
+  invoiceDocumentPages   InvoiceDocumentPage[]
+  invoiceCharges         InvoiceCharge[]
   vendorClaims           VendorClaim[]
   vendorClaimLines       VendorClaimLine[]
 }
@@ -1552,6 +1554,38 @@ model InvoiceDocument {
   feesMinor             BigInt?
   rawText               String?
   possibleDuplicate     Boolean             @default(false)
+  docType               InvoiceDocType      @default(INVOICE)
+  vendorAccountNumber   String?
+  vendorAddress         String?
+  vendorPhone           String?
+  billTo                String?
+  shipTo                String?
+  customerAccountNumber String?
+  licenseNumber         String?
+  orderNumber           String?
+  documentNumber        String?
+  routeReference        String?
+  salesperson           String?
+  customerTerms         String?
+  paymentTerms          String?
+  shipDate              DateTime?
+  deliveryDate          DateTime?
+  dueDate               DateTime?
+  grossMerchandiseMinor BigInt?
+  postOffTotalMinor     BigInt?
+  depositMinor          BigInt?
+  creditMinor           BigInt?
+  amountDueMinor        BigInt?
+  invoiceNetMinor       BigInt?
+  /// Regulatory/category summary values (bottles, packages, gallons by class). Preserved, never required.
+  summaryMetadata       Json?
+  /// Previous balances, prior invoices, payments received. Accounting history, never merchandise.
+  remittanceMetadata    Json?
+  /// Header fields the vendor printed that have no canonical home, kept as label/value pairs.
+  vendorExtras          Json?
+  /// Per canonical field: { label, original, normalized, confidence, page, corrected }.
+  fieldEvidence         Json?
+  pageCount             Int                 @default(1)
   uploadedAt            DateTime            @default(now())
   confirmedAt           DateTime?
   rejectedAt            DateTime?
@@ -1565,6 +1599,8 @@ model InvoiceDocument {
   confirmedBy           Employee?           @relation("InvoiceConfirmedBy", fields: [organizationId, confirmedByEmployeeId], references: [organizationId, id])
   rejectedBy            Employee?           @relation("InvoiceRejectedBy", fields: [organizationId, rejectedByEmployeeId], references: [organizationId, id])
   lines                 InvoiceLine[]
+  pages                 InvoiceDocumentPage[]
+  charges               InvoiceCharge[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, documentHash])
@@ -1597,12 +1633,59 @@ model InvoiceLine {
   matchStatus       InvoiceLineMatchStatus @default(NEEDS_REVIEW)
   newProductData    Json?
   ignored           Boolean                @default(false)
+  lineKind          InvoiceLineKind        @default(PRODUCT)
+  vendorItemNumber  String?
+  caseUpc           String?
+  alternateUpc      String?
+  brand             String?
+  packLabel         String?
+  vintage           String?
+  categoryHint      String?
+  sourcePage        Int?
+  casesOrdered      Int?
+  casesBackordered  Int                    @default(0)
+  casesRejected     Int                    @default(0)
+  casesDamaged      Int                    @default(0)
+  unitsOrdered      Int?
+  looseUnitsShipped Int                    @default(0)
+  looseUnitsReceived Int                   @default(0)
+  unitsDamaged      Int                    @default(0)
+  unitsBroken       Int                    @default(0)
+  unitsMissing      Int                    @default(0)
+  bonusUnits        Int                    @default(0)
+  fulfillment       InvoiceLineFulfillment @default(RECEIVED)
+  damageDisposition ReceivingDisposition?
+  unitListMinor     BigInt?
+  listCaseMinor     BigInt?
+  grossLineMinor    BigInt?
+  postOffPerCaseMinor BigInt?
+  qtyDiscountPerCaseMinor BigInt?
+  caseDiscountPerCaseMinor BigInt?
+  promoDiscountPerCaseMinor BigInt?
+  allowancePerCaseMinor BigInt?
+  rebatePerCaseMinor BigInt?
+  otherDiscountPerCaseMinor BigInt?
+  lineDiscountMinor BigInt?
+  netCaseCostMinor  BigInt?
+  netUnitCostMinor  BigInt?
+  lineTaxMinor      BigInt?
+  /// Vendor-printed RIP code/value. Meaning differs by distributor, so it is displayed and kept, not interpreted.
+  ripCode           String?
+  ripValueMinor     BigInt?
+  temporaryDeal     Boolean                @default(false)
+  dealEndsAt        DateTime?
+  /// The vendor's normal case cost when this invoice carries a temporary deal price.
+  standardCaseCostMinor BigInt?
+  notes             String?
+  evidence          Json?
+  correctedFields   Json?
   createdAt         DateTime               @default(now())
   updatedAt         DateTime               @updatedAt
   organization      Organization           @relation(fields: [organizationId], references: [id])
   invoiceDocument   InvoiceDocument        @relation(fields: [organizationId, invoiceDocumentId], references: [organizationId, id], onDelete: Cascade)
   variant           ProductVariant?        @relation(fields: [organizationId, variantId], references: [organizationId, id])
   masterProduct     MasterProduct?         @relation(fields: [masterProductId], references: [id])
+  claimLines        VendorClaimLine[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, invoiceDocumentId, lineNumber])
@@ -1738,6 +1821,13 @@ model ProductCostHistory {
   unitsDamaged             Int               @default(0)
   unitsRejected            Int               @default(0)
   unitsShort               Int               @default(0)
+  purchaseReceiptId        String?           @db.Uuid
+  invoiceLineId            String?           @db.Uuid
+  listCaseCostMinor        BigInt?
+  netCaseCostMinor         BigInt?
+  /// The invoice's separate discount components as purchased, so history never collapses to one number.
+  componentsJson           Json?
+  temporaryDeal            Boolean           @default(false)
   createdByEmployeeId      String?           @db.Uuid
   notes                    String?
   createdAt                DateTime          @default(now())
@@ -1745,6 +1835,7 @@ model ProductCostHistory {
   variant                  ProductVariant    @relation(fields: [organizationId, variantId], references: [organizationId, id])
 
   @@unique([organizationId, id])
+  @@index([organizationId, purchaseReceiptId])
   @@index([organizationId, variantId, occurredAt(sort: Desc)])
   @@index([organizationId, vendorId, occurredAt(sort: Desc)])
 }
@@ -1837,6 +1928,11 @@ enum VendorClaimKind {
   SHORTAGE
   DAMAGE
   PRICE_DIFFERENCE
+  WRONG_PRODUCT
+  INCORRECT_COST
+  MISSING_DISCOUNT
+  OVERCHARGE
+  OTHER
 }
 
 enum VendorClaimStatus {
@@ -1883,6 +1979,8 @@ model VendorClaimLine {
   quantity       Int
   unitCostMinor  BigInt
   reason         String?
+  invoiceLineId  String?        @db.Uuid
+  invoiceLine    InvoiceLine?   @relation(fields: [organizationId, invoiceLineId], references: [organizationId, id])
   organization   Organization   @relation(fields: [organizationId], references: [id])
   claim          VendorClaim    @relation(fields: [organizationId, claimId], references: [organizationId, id])
   variant        ProductVariant @relation(fields: [organizationId, variantId], references: [organizationId, id])
@@ -1908,4 +2006,92 @@ model PromoAsset {
 
   @@unique([organizationId, id])
   @@index([organizationId, active, sortOrder])
+}
+
+enum InvoiceDocType {
+  INVOICE
+  CREDIT_MEMO
+  DELIVERY_RECEIPT
+  BACKORDER
+  ADJUSTMENT
+}
+
+/// PRODUCT lines move inventory. Every other kind is money only and never creates a product.
+enum InvoiceLineKind {
+  PRODUCT
+  DELIVERY
+  FREIGHT
+  SERVICE
+  FEE
+  DEPOSIT
+  CREDIT
+  REBATE
+  OTHER
+}
+
+enum InvoiceLineFulfillment {
+  RECEIVED
+  PARTIAL
+  BACKORDERED
+  OUT_OF_STOCK
+  CANCELLED
+}
+
+enum ReceivingDisposition {
+  SELLABLE
+  DAMAGED
+  REJECT_TO_VENDOR
+  VENDOR_CLAIM
+  PENDING_CREDIT
+}
+
+enum InvoiceChargeKind {
+  DELIVERY
+  FREIGHT
+  SERVICE
+  FUEL
+  FEE
+  DEPOSIT
+  TAX
+  CREDIT
+  OTHER
+}
+
+/// Additional pages/photos of one invoice. Page 1 lives on InvoiceDocument itself.
+model InvoiceDocumentPage {
+  id                String          @id @default(uuid()) @db.Uuid
+  organizationId    String          @db.Uuid
+  invoiceDocumentId String          @db.Uuid
+  pageNumber        Int
+  originalFilename  String
+  mimeType          String
+  fileSize          Int
+  documentHash      String
+  documentData      Bytes
+  rawText           String?
+  ocrConfidence     Decimal?        @db.Decimal(5, 4)
+  uploadedAt        DateTime        @default(now())
+  organization      Organization    @relation(fields: [organizationId], references: [id])
+  invoiceDocument   InvoiceDocument @relation(fields: [organizationId, invoiceDocumentId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, invoiceDocumentId, pageNumber])
+  @@unique([organizationId, documentHash])
+}
+
+/// Invoice-level money that is not merchandise: delivery, freight, fees, deposits, other tax, credits. Never allocated into product cost automatically.
+model InvoiceCharge {
+  id                String            @id @default(uuid()) @db.Uuid
+  organizationId    String            @db.Uuid
+  invoiceDocumentId String            @db.Uuid
+  kind              InvoiceChargeKind
+  label             String
+  originalLabel     String?
+  amountMinor       BigInt
+  createdAt         DateTime          @default(now())
+  organization      Organization      @relation(fields: [organizationId], references: [id])
+  invoiceDocument   InvoiceDocument   @relation(fields: [organizationId, invoiceDocumentId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, invoiceDocumentId])
 }

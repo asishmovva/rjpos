@@ -1,0 +1,15 @@
+.rt-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:#fff;margin:10px 0}
+.rt{width:100%;border-collapse:collapse;font-size:14px;min-width:1180px}.rt th{position:sticky;top:0;background:#f4f6f3;text-align:left;padding:9px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);white-space:nowrap}
+.rt td{padding:9px 10px;border-top:1px solid #edf0ec;vertical-align:top}.rt .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.rt tr.ignored td{opacity:.5}.rt tr.rt-issue td:nth-child(2){box-shadow:inset 3px 0 0 #d29b3d}
+.rt tr.rt-detail td{background:#fafcfb;padding:14px 16px}.rt-inline{width:64px;padding:6px 8px;border:1px solid var(--line);border-radius:7px;text-align:right}
+.rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;align-items:start}
+.rt-grid fieldset{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:8px;background:#fff;grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}.rt-grid legend{font-weight:800;font-size:13px;padding:0 6px}
+.rt-grid fieldset>.calc,.rt-grid fieldset>.hint,.rt-grid fieldset>table,.rt-grid fieldset>button,.rt-grid fieldset>div,.rt-grid fieldset>p{grid-column:1/-1}
+.rt-field{display:grid;gap:3px;font-size:12px;font-weight:700;color:var(--muted)}.rt-field input,.rt-field select,.rt-field textarea{padding:8px;border:1px solid var(--line);border-radius:7px;font-size:14px;color:var(--ink);background:#fff;min-width:0}.rt-field small{font-weight:500}
+.rt-error{color:#8d2d20}.rt-warn{color:#814f08}.rt-bad{color:#8d2d20;font-weight:700}.rt-good{color:#14523a}.rt-check{display:flex;gap:8px;align-items:center;font-size:14px;grid-column:1/-1}
+.rt-actions{display:flex;gap:10px;margin-top:10px}.rt-sum{margin:0}.rt-confirm{display:grid;gap:12px}.rt-filters{flex-wrap:wrap}.rt-filters label{min-width:150px}
+.steps li button.text{padding:0;background:none;color:inherit;font-weight:inherit}.steps li.on button.text{color:#fff}
+.file-button{display:inline-flex;align-items:center;padding:10px 14px;border-radius:8px;background:#eef2ef;color:var(--green);font-weight:700;cursor:pointer}
+.line-table tr.selected td{background:#eef6f1}
+@media(max-width:700px){.rt-grid{grid-template-columns:1fr}}
+.admin-form.wide>button:not(.primary){padding:12px 16px;border-radius:8px;background:#eef2ef;color:var(--green);font-weight:700;align-self:end}

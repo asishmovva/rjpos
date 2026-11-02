@@ -32,7 +32,7 @@ import { PurchasingController } from './purchasing.js';
 import { PhaseFiveController } from './phase-five.js';
 import { ReportingController } from './reporting.js';
 import { PhaseSevenController } from './phase-seven.js';
-import { InvoiceController, INVOICE_OCR_PROVIDER } from './invoices.js';
+import { InvoiceController, INVOICE_OCR_PROVIDER, ReceivingHistoryController } from './invoices.js';
 import { ElevationController } from './elevation.js';
 import { CostingController } from './costing.js';
 import { DayCloseController } from './operations.js';
@@ -63,7 +63,7 @@ function productionHeaders(request: Request, response: Response, next: NextFunct
 }
 
 @Module({
-  controllers: [HealthController, CorePosController, BackOfficeController, PhaseThreeController, PurchasingController, PhaseFiveController, ReportingController, PhaseSevenController, InvoiceController, ElevationController, CostingController, DayCloseController, PhaseNineController],
+  controllers: [HealthController, CorePosController, BackOfficeController, PhaseThreeController, PurchasingController, PhaseFiveController, ReportingController, PhaseSevenController, InvoiceController, ReceivingHistoryController, ElevationController, CostingController, DayCloseController, PhaseNineController],
   providers: [
     HealthService,
     TenantContextService,
