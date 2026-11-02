@@ -14,7 +14,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
   ] },
   { title: 'Purchasing', items: [
     { label: 'Vendors', area: 'Vendors' }, { label: 'Vendor Mappings', area: 'Vendor Mappings' }, { label: 'Purchase Orders', area: 'Purchase Orders' }, { label: 'Receiving History', area: 'Receiving History' },
-    { label: 'Invoice receiving', href: '/admin/invoices/' }, { label: 'Claims & suggestions', href: '/admin/claims/' },
+    { label: 'Invoice receiving', href: '/admin/invoices/' }, { label: 'Receiving search', href: '/admin/receiving/' }, { label: 'Claims & suggestions', href: '/admin/claims/' },
   ] },
   { title: 'Sales & cash', items: [
     { label: 'Orders', area: 'Orders' }, { label: 'Refunds', area: 'Refunds' }, { label: 'Reports & exports', href: '/admin/reports/' }, { label: 'End of day (Z report)', href: '/admin/day-close/' },

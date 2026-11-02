@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { adminApi, money, type Category, type InvoiceDocument, type InvoiceLine, type InventoryRow, type Store, type Vendor } from '../admin-client';
-import { costingApi, type InvoiceReview } from '../costing-client';
-import { InvoiceReviewPanel } from './review-panel';
+import { ConfirmPanel, HeaderForm, ReceivingTable, type HeaderDoc } from './receiving-flow';
+import { dollarsToMinor, receivingApi, receivingError, type FullReview, type ReceivingLine } from './receiving-client';
 import '../admin.css';
 import '../costing.css';
+import './receiving.css';
 
 type NewProductDraft = { categoryId: string; productName: string; variantName: string; sku: string; barcode: string; priceMinor: string };
 const emptyDraft: NewProductDraft = { categoryId: '', productName: '', variantName: 'Each', sku: '', barcode: '', priceMinor: '' };
@@ -31,10 +32,10 @@ export default function InvoicesPage(): React.ReactNode {
   const [storeId, setStoreId] = useState('');
   const [matches, setMatches] = useState<Record<string, string>>({});
   const [drafts, setDrafts] = useState<Record<string, NewProductDraft>>({});
-  const [duplicateAccepted, setDuplicateAccepted] = useState(false);
-  const [review, setReview] = useState<InvoiceReview | null>(null);
-  const [discrepanciesAccepted, setDiscrepanciesAccepted] = useState(false);
-  const refreshReview = async (id: string) => { try { setReview(await costingApi.invoiceReview(id)); } catch { setReview(null); } setDiscrepanciesAccepted(false); };
+  const [review, setReview] = useState<FullReview | null>(null);
+  const [step, setStep] = useState<'header' | 'match' | 'costs' | 'confirm'>('header');
+  const [newLine, setNewLine] = useState({ kind: 'PRODUCT', description: '', vendorItem: '', upc: '', units: '12', cases: '1', caseCost: '', amount: '' });
+  const refreshReview = async (id: string) => { try { setReview(await receivingApi.review(id)); } catch { setReview(null); } };
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -70,6 +71,37 @@ export default function InvoicesPage(): React.ReactNode {
     if (!document) return;
     await run(() => adminApi.updateInvoiceLine(document.id, line.id, body), success);
   }
+  async function saveHeader(body: Record<string, unknown>): Promise<void> {
+    if (!document) return;
+    await run(async () => { await receivingApi.updateHeader(document.id, body); return adminApi.invoice(document.id); }, 'Saved.');
+  }
+  async function saveLine(lineId: string, body: Record<string, unknown>): Promise<void> {
+    if (!document) return;
+    await run(async () => { await receivingApi.updateLine(document.id, lineId, body); return adminApi.invoice(document.id); }, '');
+  }
+  async function addManualLine(): Promise<void> {
+    if (!document) return;
+    const product = newLine.kind === 'PRODUCT';
+    const cost = dollarsToMinor(product ? newLine.caseCost : newLine.amount);
+    if (cost === null || cost === undefined || !newLine.description.trim()) { setError('Enter a description and an amount like 12.50.'); return; }
+    const body = product
+      ? { description: newLine.description.trim(), caseQuantity: Number(newLine.units) || 1, casesShipped: Number(newLine.cases) || 1, caseCostMinor: cost, ...(newLine.vendorItem.trim() ? { vendorItemNumber: newLine.vendorItem.trim() } : {}), ...(newLine.upc.trim() ? { upc: newLine.upc.trim() } : {}) }
+      : { lineKind: newLine.kind, description: newLine.description.trim(), lineTotalMinor: cost };
+    await run(async () => { await receivingApi.addLine(document.id, body); return adminApi.invoice(document.id); }, 'Line added.');
+    setNewLine({ ...newLine, description: '', vendorItem: '', upc: '', caseCost: '', amount: '' });
+  }
+  async function createManual(): Promise<void> {
+    if (!storeId) { setError('Choose a store first.'); return; }
+    setBusy(true); setError('');
+    try { const created = await receivingApi.createManual({ storeId, ...(vendorId ? { vendorId } : {}) }); await load(); await open(created.id); setStep('header'); setMessage('Manual invoice started. Enter the header, then the lines.'); }
+    catch (cause) { setError(receivingError(cause)); } finally { setBusy(false); }
+  }
+  async function addPageFile(file: File | undefined): Promise<void> {
+    if (!file || !document) return;
+    setBusy(true); setError('');
+    try { await receivingApi.addPage(document.id, await receivingApi.pageFile(file)); await open(document.id); setMessage('Page added to this invoice. Check the lines it contributed.'); }
+    catch (cause) { setError(receivingError(cause)); } finally { setBusy(false); }
+  }
   const extractedLinesTotal = useMemo(() => document?.lines.filter((line) => !line.ignored).reduce((sum, line) => sum + BigInt(line.lineTotalMinor), 0n) ?? 0n, [document]);
   const unresolved = document?.lines.some((line) => !line.ignored && line.matchStatus !== 'MATCHED' && line.matchStatus !== 'NEW_PRODUCT') ?? true;
 
@@ -82,6 +114,7 @@ export default function InvoicesPage(): React.ReactNode {
       <label>Vendor (optional)<select value={vendorId} onChange={(event) => setVendorId(event.target.value)}><option value="">Match during review</option>{vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}</select></label>
       <label className="grow">Invoice image, PDF, or development JSON fixture<input aria-label="Invoice file" type="file" accept="image/jpeg,image/png,image/webp,application/pdf,application/json,.json" onChange={(event) => setFile(event.target.files?.[0])} /></label>
       <button className="primary" disabled={busy || !file || !storeId} onClick={() => void upload()}>Upload and extract</button>
+      <button disabled={busy || !storeId} onClick={() => void createManual()}>Enter manually (no OCR)</button>
     </section>
     <div className="admin-table-wrap"><table><thead><tr><th>Document</th><th>Vendor / number</th><th>OCR</th><th>Review</th><th>Total</th><th /></tr></thead><tbody>
       {invoices.map((invoice) => <tr key={invoice.id}><td>{invoice.originalFilename}<small>{new Date(invoice.uploadedAt).toLocaleString()}</small></td><td>{invoice.vendor?.name ?? 'Unmatched'}<small>{invoice.invoiceNumber ?? 'No invoice number'}</small></td><td><span className={`pill ${invoice.ocrStatus === 'FAILED' ? 'warn' : ''}`}>{invoice.ocrStatus}</span></td><td><span className={`pill ${invoice.reviewStatus === 'DRAFT' ? 'warn' : ''}`}>{invoice.reviewStatus}</span>{invoice.possibleDuplicate && <small>Possible duplicate</small>}</td><td>{invoice.totalMinor ? money(invoice.totalMinor) : '—'}</td><td><button onClick={() => void open(invoice.id)}>Review</button></td></tr>)}
@@ -93,7 +126,10 @@ export default function InvoicesPage(): React.ReactNode {
         <label>Vendor<select disabled={document.reviewStatus !== 'DRAFT'} value={document.vendor?.id ?? vendorId} onChange={(event) => { setVendorId(event.target.value); void run(() => adminApi.updateInvoice(document.id, { vendorId: event.target.value || null }), 'Vendor updated.'); }}><option value="">Select vendor</option>{vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}</select></label>
         <span>Invoice <strong>{document.invoiceNumber ?? 'Not detected'}</strong></span><span>Extracted lines <strong>{money(extractedLinesTotal)}</strong></span><span>Invoice total <strong>{document.totalMinor ? money(document.totalMinor) : 'Not detected'}</strong></span>
       </div>
-      <div className="admin-table-wrap"><table><thead><tr><th>Status</th><th>Extracted item</th><th>Qty / pack</th><th>Cost</th><th>Product decision</th><th /></tr></thead><tbody>
+      <ol className="steps" aria-label="Receiving steps">{([['header', '1. Header'], ['match', '2. Match products'], ['costs', '3. Costs & receiving'], ['confirm', '4. Reconcile & confirm']] as const).map(([id, label]) => <li key={id} className={step === id ? 'on' : ''}><button className="text" onClick={() => setStep(id)} aria-current={step === id ? 'step' : undefined}>{label}</button></li>)}</ol>
+      {review && review.receiving.blockers.length > 0 && step !== 'confirm' && <p className="discrepancy error" role="status">⛔ {review.receiving.blockers[0]!.message} <button className="text" onClick={() => setStep('confirm')}>See all</button></p>}
+      {step === 'header' && <HeaderForm doc={document as unknown as HeaderDoc} vendors={vendors} disabled={busy || document.reviewStatus !== 'DRAFT'} onSave={(body) => void saveHeader(body)} />}
+      {step === 'match' && <div className="admin-table-wrap"><table><thead><tr><th>Status</th><th>Extracted item</th><th>Qty / pack</th><th>Cost</th><th>Product decision</th><th /></tr></thead><tbody>
         {document.lines.map((line) => {
           const draft = drafts[line.id] ?? { ...emptyDraft, categoryId: categories[0]?.id ?? '', productName: line.description, sku: `INV-${line.lineNumber}`, barcode: line.upc ?? '' };
           return <tr key={line.id} className={line.ignored ? 'ignored' : ''}><td><span className={`pill ${line.matchStatus !== 'MATCHED' ? 'warn' : ''}`}>{line.ignored ? 'IGNORED' : line.matchStatus.replace('_', ' ')}</span><small>{line.confidence ? `${Math.round(Number(line.confidence) * 100)}% confidence` : ''}</small></td>
@@ -115,11 +151,26 @@ export default function InvoicesPage(): React.ReactNode {
               </details>
             </>}</td><td><button onClick={() => void updateLine(line, { ignored: !line.ignored }, line.ignored ? 'Line restored.' : 'Line ignored.')}>{line.ignored ? 'Restore' : 'Ignore'}</button></td></tr>;
         })}
-      </tbody></table></div>
-      {review && <InvoiceReviewPanel document={document} review={review} disabled={busy || document.reviewStatus !== 'DRAFT'} onToggleVendorCost={(lineId, value) => { const line = document.lines.find((candidate) => candidate.id === lineId); if (line) void updateLine(line, { updateVendorCost: value }, value ? 'Vendor cost will be updated when you confirm.' : 'Vendor cost will be left unchanged.'); }} />}
-      {review?.hasDiscrepancies && document.reviewStatus === 'DRAFT' && <label className="warning"><input type="checkbox" checked={discrepanciesAccepted} onChange={(event) => setDiscrepanciesAccepted(event.target.checked)} /> I reviewed the discrepancies above and accept them.</label>}
-      {document.possibleDuplicate && <label className="warning"><input type="checkbox" checked={duplicateAccepted} onChange={(event) => setDuplicateAccepted(event.target.checked)} /> I reviewed the possible duplicate and intend to receive it.</label>}
-      <div className="invoice-actions"><button disabled={busy || document.reviewStatus !== 'DRAFT'} onClick={() => void run(() => adminApi.retryInvoiceOcr(document.id), 'OCR rerun completed; review matches again.')}>Retry OCR</button><button disabled={busy || document.reviewStatus !== 'DRAFT'} onClick={() => void run(() => adminApi.rejectInvoice(document.id), 'Invoice rejected; no inventory was changed.')}>Reject</button><button className="primary" disabled={busy || document.reviewStatus !== 'DRAFT' || document.ocrStatus !== 'COMPLETED' || unresolved || !document.vendor || (document.possibleDuplicate && !duplicateAccepted) || (review?.hasDiscrepancies === true && !discrepanciesAccepted)} onClick={() => void run(() => adminApi.confirmInvoice(document.id, duplicateAccepted, discrepanciesAccepted), 'Invoice confirmed and inventory received through the purchase ledger.')}>Confirm receiving</button></div>
+      </tbody></table></div>}
+      {step === 'costs' && review && <>
+        <ReceivingTable lines={document.lines as unknown as ReceivingLine[]} review={review.receiving} disabled={busy || document.reviewStatus !== 'DRAFT'} onSave={saveLine}
+          onRemove={(lineId) => void run(async () => { await receivingApi.removeLine(document.id, lineId); return adminApi.invoice(document.id); }, 'Line removed.')}
+          onClaim={(line, claim) => void run(async () => { await receivingApi.claimLine(document.id, line.id, claim); return adminApi.invoice(document.id); }, 'Draft vendor claim created. Find it under Vendor claims.')} />
+        {document.reviewStatus === 'DRAFT' && <section className="detail-card" aria-label="Add line"><h3>Add a line by hand</h3>
+          <div className="inline-form"><label>Type<select value={newLine.kind} onChange={(event) => setNewLine({ ...newLine, kind: event.target.value })}><option value="PRODUCT">Product</option>{['DELIVERY', 'FREIGHT', 'SERVICE', 'FEE', 'DEPOSIT', 'CREDIT', 'REBATE', 'OTHER'].map((kind) => <option key={kind} value={kind}>{kind.charAt(0) + kind.slice(1).toLowerCase()} (no stock)</option>)}</select></label>
+            <label>Description<input aria-label="New line description" value={newLine.description} onChange={(event) => setNewLine({ ...newLine, description: event.target.value })} /></label>
+            {newLine.kind === 'PRODUCT' ? <><label>Vendor item #<input value={newLine.vendorItem} onChange={(event) => setNewLine({ ...newLine, vendorItem: event.target.value })} /></label><label>UPC<input value={newLine.upc} onChange={(event) => setNewLine({ ...newLine, upc: event.target.value })} /></label>
+              <label>Units / case<input inputMode="numeric" value={newLine.units} onChange={(event) => setNewLine({ ...newLine, units: event.target.value.replace(/\D/g, '') })} /></label><label>Cases<input inputMode="numeric" value={newLine.cases} onChange={(event) => setNewLine({ ...newLine, cases: event.target.value.replace(/\D/g, '') })} /></label>
+              <label>Case cost ($)<input aria-label="New line case cost" inputMode="decimal" value={newLine.caseCost} onChange={(event) => setNewLine({ ...newLine, caseCost: event.target.value.replace(/[^\d.]/g, '') })} /></label></>
+              : <label>Amount ($)<input aria-label="New line amount" inputMode="decimal" value={newLine.amount} onChange={(event) => setNewLine({ ...newLine, amount: event.target.value.replace(/[^\d.]/g, '') })} /></label>}
+            <button className="primary" disabled={busy || !newLine.description.trim()} onClick={() => void addManualLine()}>Add line</button></div></section>}
+      </>}
+      {step === 'confirm' && review && <ConfirmPanel docId={document.id} status={document.reviewStatus} review={review} busy={busy} setError={setError} onChanged={() => void run(() => adminApi.invoice(document.id), '')}
+        onConfirmed={(text) => { setMessage(text); void run(() => adminApi.invoice(document.id), text); }} />}
+      <div className="invoice-actions"><button disabled={busy || document.reviewStatus !== 'DRAFT'} onClick={() => void run(() => adminApi.retryInvoiceOcr(document.id), 'OCR rerun completed; review matches again.')}>Retry OCR</button>
+        <label className="file-button">Add another page / photo<input aria-label="Add page" type="file" hidden disabled={busy || document.reviewStatus !== 'DRAFT'} accept="image/jpeg,image/png,image/webp,application/pdf,application/json,.json" onChange={(event) => { void addPageFile(event.target.files?.[0]); event.target.value = ''; }} /></label>
+        <button disabled={busy || document.reviewStatus !== 'DRAFT'} onClick={() => { if (window.confirm('Reject this invoice? No inventory will change.')) void run(() => adminApi.rejectInvoice(document.id), 'Invoice rejected; no inventory was changed.'); }}>Reject</button>
+        {document.vendor && <a className="hdr-link" href={`/admin/vendor/?id=${document.vendor.id}`}>Open vendor →</a>}</div>
     </section>}
   </main>;
 }

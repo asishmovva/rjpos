@@ -4,6 +4,7 @@ import { priceMetrics } from '@rjpos/domain-types';
 import { parseDollarsToMinor } from '../../register-api';
 import { adminApi, adminRequest, money, type Store } from '../admin-client';
 import { phaseNineApi } from '../phase9-client';
+import { receivingApi, show, type ProductReceipts } from '../invoices/receiving-client';
 import { costingApi, type PriceBook, type ProductDetail, type TaxProfile, type VendorDealKind } from '../costing-client';
 import '../admin.css';
 import '../costing.css';
@@ -19,12 +20,14 @@ export default function ProductDetailPage(): React.ReactNode {
   const [detail, setDetail] = useState<ProductDetail | null>(null); const [tab, setTab] = useState<Tab>('Overview'); const [error, setError] = useState(''); const [message, setMessage] = useState('');
   const [priceBooks, setPriceBooks] = useState<PriceBook[]>([]); const [stores, setStores] = useState<Store[]>([]); const [taxProfiles, setTaxProfiles] = useState<TaxProfile[]>([]);
   const [spVariant, setSpVariant] = useState(''); const [spBook, setSpBook] = useState(''); const [spStore, setSpStore] = useState(''); const [spPrice, setSpPrice] = useState(''); const [spFrom, setSpFrom] = useState(''); const [spTo, setSpTo] = useState('');
+  const [receipts, setReceipts] = useState<ProductReceipts | null>(null);
   const [altUpc, setAltUpc] = useState<Record<string, string>>({}); const [caseUpcs, setCaseUpcs] = useState<Record<string, string>>({});
   const [dealKind, setDealKind] = useState<VendorDealKind>('DISCOUNT_PER_CASE'); const [dealName, setDealName] = useState(''); const [dealAmount, setDealAmount] = useState(''); const [dealMin, setDealMin] = useState(''); const [dealVendor, setDealVendor] = useState('');
 
   const load = useCallback(async () => {
     if (!id) { setError('No product selected.'); return; }
     const [productDetail, books, storeRows, taxRows] = await Promise.all([costingApi.productDetail(id), costingApi.priceBooks(), adminApi.stores(), costingApi.taxProfiles()]);
+    void receivingApi.productReceipts(id).then(setReceipts).catch(() => setReceipts(null));
     setDetail(productDetail); setPriceBooks(books.filter((book) => book.active)); setStores(storeRows); setTaxProfiles(taxRows.profiles.filter((profile) => profile.active));
     setSpVariant((current) => current || productDetail.product.variants[0]?.id || ''); setSpStore((current) => current || storeRows[0]?.id || ''); setDealVendor((current) => current || productDetail.mappings[0]?.vendorId || '');
   }, [id]);
@@ -98,7 +101,10 @@ export default function ProductDetailPage(): React.ReactNode {
 
     {tab === 'Purchase History' && table(['Date', 'PO', 'Vendor', 'Ordered', 'Received', 'Units / case', 'Case cost', 'Discount / case', 'Unit cost'], detail.purchaseHistory.map((line) => [when(line.createdAt), line.purchaseOrder.poNumber, line.purchaseOrder.vendor.name, line.orderedQuantity, line.receivedQuantity, line.unitsPerCase ?? '—', line.caseCostMinor ? money(line.caseCostMinor) : '—', line.discountPerCaseMinor ? money(line.discountPerCaseMinor) : '—', money(line.unitCostMinor)]), 'No purchase orders.')}
 
-    {tab === 'Receiving History' && table(['Received', 'Reference', 'Delivered', 'Damaged', 'Rejected', 'Unit cost'], detail.receivingHistory.map((line) => [when(line.receipt.receivedAt), line.receipt.vendorReferenceNumber ?? '—', line.deliveredQuantity, line.damagedQuantity, line.rejectedQuantity, money(line.unitCostMinor)]), 'Nothing received yet.')}
+    {tab === 'Receiving History' && <>
+      {receipts?.last && <dl className="calc" aria-label="Last received"><div><dt>Last vendor</dt><dd>{receipts.last.vendor?.name ?? '—'}</dd></div><div><dt>Last received</dt><dd>{when(receipts.last.occurredAt)}</dd></div><div><dt>Last case cost</dt><dd>{show(receipts.last.baseCaseCostMinor)}</dd></div><div><dt>Last net case cost</dt><dd>{show(receipts.last.netCaseCostMinor ?? receipts.last.effectiveCaseCostMinor)}</dd></div><div><dt>Last unit cost</dt><dd>{show(receipts.last.effectiveUnitCostMinor)}</dd></div></dl>}
+      {table(['Date', 'Vendor', 'Invoice', 'Bottles', 'List case', 'Base case', 'Discount', 'Net case', 'Effective unit', 'Deal'], (receipts?.history ?? []).map((row) => [when(row.occurredAt), row.vendor?.name ?? '—', row.invoice?.invoiceNumber ?? '—', row.unitsReceived ?? '—', show(row.listCaseCostMinor), show(row.baseCaseCostMinor), show(row.discountPerCaseMinor), show(row.netCaseCostMinor ?? row.effectiveCaseCostMinor), show(row.effectiveUnitCostMinor), row.temporaryDeal ? 'Temporary' : '']), 'Nothing received yet.')}
+      <p className="hint">From what was actually posted when each delivery was confirmed, not today&apos;s vendor price.</p></>}
 
     {tab === 'Invoices' && table(['Invoice', 'Date', 'Vendor', 'Status', 'Cases', 'Units / case', 'Case cost', 'Discount / case', 'Line total'], detail.invoices.map((line) => [line.invoiceDocument.invoiceNumber ?? '—', when(line.invoiceDocument.invoiceDate), line.invoiceDocument.vendor?.name ?? '—', line.invoiceDocument.reviewStatus, line.quantity, line.caseQuantity, line.caseCostMinor ? money(line.caseCostMinor) : '—', line.discountPerCaseMinor ? money(line.discountPerCaseMinor) : '—', money(line.lineTotalMinor)]), 'No invoices.')}
 
