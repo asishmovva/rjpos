@@ -546,7 +546,9 @@ export async function transitionPurchaseOrder(prisma: PrismaClient, actor: Purch
 }
 
 type ReceiptLineInput = { purchaseOrderLineId: string; deliveredQuantity: number; damagedQuantity?: number; rejectedQuantity?: number; unitCostMinor?: string;
-  /** Units invoiced or ordered but not delivered; recorded in cost history only. */ shortQuantity?: number };
+  /** Units invoiced or ordered but not delivered; recorded in cost history only. */ shortQuantity?: number;
+  /** Exact invoice economics for this line, stored in cost history as purchased (never rewritten later). */
+  costDetail?: { invoiceLineId?: string; listCaseCostMinor?: string; baseCaseCostMinor: string; discountPerCaseMinor: string; rebatePerCaseMinor: string; netCaseCostMinor: string; components?: Record<string, string>; temporaryDeal?: boolean } };
 
 export async function receivePurchaseOrder(prisma: PrismaClient, actor: PurchasingActor, purchaseOrderId: string, input: {
   idempotencyKey: string; vendorReferenceNumber?: string; notes?: string; lines: ReceiptLineInput[]; invoiceDocumentId?: string;
@@ -612,26 +614,37 @@ export async function receivePurchaseOrder(prisma: PrismaClient, actor: Purchasi
       {
         // Append-only cost history: the components as purchased, never rewritten when the vendor's current price changes.
         const unitsPerCase = orderLine.unitsPerCase ?? 1;
-        const overridden = line.unitCostMinor !== undefined && unitCostMinor !== orderLine.unitCostMinor;
-        const base = !overridden && orderLine.caseCostMinor !== null ? orderLine.caseCostMinor : unitCostMinor * BigInt(unitsPerCase);
-        const discount = overridden ? 0n : orderLine.discountPerCaseMinor ?? 0n; const rebate = overridden ? 0n : orderLine.rebatePerCaseMinor ?? 0n;
+        const detail = line.costDetail;
+        const overridden = !detail && line.unitCostMinor !== undefined && unitCostMinor !== orderLine.unitCostMinor;
+        const base = detail ? BigInt(detail.baseCaseCostMinor) : !overridden && orderLine.caseCostMinor !== null ? orderLine.caseCostMinor : unitCostMinor * BigInt(unitsPerCase);
+        const discount = detail ? BigInt(detail.discountPerCaseMinor) : overridden ? 0n : orderLine.discountPerCaseMinor ?? 0n; const rebate = detail ? BigInt(detail.rebatePerCaseMinor) : overridden ? 0n : orderLine.rebatePerCaseMinor ?? 0n;
         let breakdown;
         try { breakdown = effectiveCost({ baseCaseCostMinor: base, unitsPerCase, discountPerCaseMinor: discount, rebatePerCaseMinor: rebate }); }
         catch { breakdown = effectiveCost({ baseCaseCostMinor: base, unitsPerCase }); }
         await recordCostHistory(tx, { organizationId: actor.organizationId, storeId: order.storeId, variantId: orderLine.variantId, vendorId: purchaseOrder.vendorId, purchaseOrderId,
           source: input.invoiceDocumentId ? 'INVOICE_CONFIRMED' : 'PURCHASE_RECEIPT', ...(input.invoiceDocumentId ? { invoiceDocumentId: input.invoiceDocumentId } : {}), cost: breakdown, casesOrdered: Math.floor(orderLine.orderedQuantity / unitsPerCase) || null,
           casesReceived: line.deliveredQuantity % unitsPerCase === 0 ? line.deliveredQuantity / unitsPerCase : null, unitsReceived: line.deliveredQuantity,
-          unitsDamaged: line.damagedQuantity ?? 0, unitsRejected: line.rejectedQuantity ?? 0, unitsShort: Math.max(0, Math.trunc(line.shortQuantity ?? 0)), createdByEmployeeId: receiver.id, notes: `Receipt ${receipt.id}` });
+          unitsDamaged: line.damagedQuantity ?? 0, unitsRejected: line.rejectedQuantity ?? 0, unitsShort: Math.max(0, Math.trunc(line.shortQuantity ?? 0)), createdByEmployeeId: receiver.id, notes: `Receipt ${receipt.id}`,
+          purchaseReceiptId: receipt.id, ...(detail ? { invoiceLineId: detail.invoiceLineId ?? null, listCaseCostMinor: detail.listCaseCostMinor ? BigInt(detail.listCaseCostMinor) : null, netCaseCostMinor: BigInt(detail.netCaseCostMinor), componentsJson: detail.components ?? null, temporaryDeal: detail.temporaryDeal === true } : {}) });
       }
-      if (accepted > 0) {
+      // Ledger: everything that physically entered the building and was not rejected is received, then damaged units are written off
+      // with their own DAMAGE movement, so net stock equals sellable units and the damage is on the ledger.
+      const entered = line.deliveredQuantity - (line.rejectedQuantity ?? 0);
+      if (entered > 0) {
         const level = await tx.inventoryLevel.upsert({
           where: { organizationId_storeId_variantId: { organizationId: actor.organizationId, storeId: order.storeId, variantId: orderLine.variantId } },
-          create: { organizationId: actor.organizationId, storeId: order.storeId, variantId: orderLine.variantId, onHand: accepted },
-          update: { onHand: { increment: accepted } },
+          create: { organizationId: actor.organizationId, storeId: order.storeId, variantId: orderLine.variantId, onHand: entered },
+          update: { onHand: { increment: entered } },
         });
         await tx.inventoryMovement.create({ data: { organizationId: actor.organizationId, storeId: order.storeId, variantId: orderLine.variantId,
-          quantityDelta: accepted, type: 'PURCHASE_RECEIPT', referenceType: 'PURCHASE_RECEIPT', referenceId: receipt.id,
+          quantityDelta: entered, type: 'PURCHASE_RECEIPT', referenceType: 'PURCHASE_RECEIPT', referenceId: receipt.id,
           reason: `Purchase order ${purchaseOrder.poNumber}`, resultingOnHand: level.onHand, employeeId: receiver.id } });
+        if ((line.damagedQuantity ?? 0) > 0) {
+          const after = await tx.inventoryLevel.update({ where: { id: level.id }, data: { onHand: { decrement: line.damagedQuantity! } } });
+          await tx.inventoryMovement.create({ data: { organizationId: actor.organizationId, storeId: order.storeId, variantId: orderLine.variantId,
+            quantityDelta: -line.damagedQuantity!, type: 'DAMAGE', referenceType: 'PURCHASE_RECEIPT', referenceId: receipt.id,
+            reason: `Damaged on receipt, purchase order ${purchaseOrder.poNumber}`, resultingOnHand: after.onHand, employeeId: receiver.id } });
+        }
       }
       await tx.outboxEvent.create({ data: { organizationId: actor.organizationId, aggregateType: 'PurchaseReceipt',
         aggregateId: receipt.id, eventType: 'PURCHASE_RECEIPT_LINE_RECORDED',

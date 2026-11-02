@@ -8,6 +8,7 @@ export async function recordCostHistory(tx: Tx, input: {
   organizationId: string; storeId?: string | null; variantId: string; vendorId?: string | null; purchaseOrderId?: string | null; invoiceDocumentId?: string | null;
   source: 'PRODUCT_CREATED' | 'PURCHASE_RECEIPT' | 'INVOICE_CONFIRMED' | 'MANUAL_UPDATE'; occurredAt?: Date; casesOrdered?: number | null; casesReceived?: number | null;
   cost: CostBreakdown; unitsReceived?: number | null; unitsDamaged?: number; unitsRejected?: number; unitsShort?: number; createdByEmployeeId?: string | null; notes?: string | null;
+  purchaseReceiptId?: string | null; invoiceLineId?: string | null; listCaseCostMinor?: bigint | null; netCaseCostMinor?: bigint | null; componentsJson?: Record<string, string> | null; temporaryDeal?: boolean;
 }): Promise<void> {
   await tx.productCostHistory.create({ data: {
     organizationId: input.organizationId, storeId: input.storeId ?? null, variantId: input.variantId, vendorId: input.vendorId ?? null,
@@ -16,5 +17,7 @@ export async function recordCostHistory(tx: Tx, input: {
     baseCaseCostMinor: input.cost.baseCaseCostMinor, discountPerCaseMinor: input.cost.discountPerCaseMinor, rebatePerCaseMinor: input.cost.rebatePerCaseMinor,
     effectiveCaseCostMinor: input.cost.effectiveCaseCostMinor, effectiveUnitCostMinor: input.cost.effectiveUnitCostMinor, unitsReceived: input.unitsReceived ?? null,
     unitsDamaged: input.unitsDamaged ?? 0, unitsRejected: input.unitsRejected ?? 0, unitsShort: input.unitsShort ?? 0, createdByEmployeeId: input.createdByEmployeeId ?? null, notes: input.notes ?? null,
+    purchaseReceiptId: input.purchaseReceiptId ?? null, invoiceLineId: input.invoiceLineId ?? null, listCaseCostMinor: input.listCaseCostMinor ?? null, netCaseCostMinor: input.netCaseCostMinor ?? null,
+    ...(input.componentsJson ? { componentsJson: input.componentsJson } : {}), temporaryDeal: input.temporaryDeal ?? false,
   } });
 }

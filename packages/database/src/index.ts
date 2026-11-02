@@ -35,8 +35,12 @@ export {
 export { PosError } from './pos-errors.js';
 export { getReceipt, refundOrder, searchOrders, voidOrder } from './orders.js';
 export {
+  appendInvoiceOcrResult,
   applyInvoiceOcrResult,
   confirmInvoiceDocument,
+  createClaimFromInvoiceLine,
+  createManualInvoice,
+  lineToInput,
   createInvoiceDocument,
   getInvoiceDocument,
   getInvoiceReview,
@@ -47,9 +51,12 @@ export {
   rejectInvoiceDocument,
   updateInvoiceDocument,
   updateInvoiceLine,
+  type InvoiceHeaderInput,
   type InvoiceOcrLine,
   type InvoiceOcrResult,
 } from './invoices.js';
+export { addInvoiceLine, addInvoicePage, findContinuationCandidates, getReceivingReview, lineFromPrintedFields, mergeInvoiceDocuments, removeInvoiceCharge, removeInvoiceLine, saveInvoiceCharge, type ChargeInput, type FieldEvidence, type InvoiceLineInput, type PrintedField } from './invoice-receiving.js';
+export { getReceiptDetail, productReceiptHistory, searchReceiving, vendorOverview, type ReceivingFilter } from './receiving-history.js';
 export {
   createCategory,
   createEmployee,

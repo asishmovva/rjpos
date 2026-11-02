@@ -3,7 +3,8 @@ import type { AdminActor } from './back-office.js';
 import { PosError } from './pos-errors.js';
 import { writeAudit } from './tax-profiles.js';
 
-type LineInput = { variantId: string; quantity: number; unitCostMinor?: string; reason?: string };
+type LineInput = { variantId: string; quantity: number; unitCostMinor?: string; reason?: string; invoiceLineId?: string };
+export const CLAIM_KINDS = ['RETURN', 'SHORTAGE', 'DAMAGE', 'PRICE_DIFFERENCE', 'WRONG_PRODUCT', 'INCORRECT_COST', 'MISSING_DISCOUNT', 'OVERCHARGE', 'OTHER'] as const;
 const money = (value: string | undefined, code: string): bigint | null => {
   if (value === undefined || value === '') return null;
   if (!/^(0|[1-9]\d{0,14})$/.test(value)) throw new PosError(code);
@@ -20,7 +21,7 @@ export async function createVendorClaim(prisma: PrismaClient, actor: AdminActor,
 }) {
   const storeId = input.storeId ?? actor.storeId;
   if (!storeId || (actor.storeId && actor.storeId !== storeId)) throw new PosError('STORE_ACCESS_DENIED', 403);
-  if (!['RETURN', 'SHORTAGE', 'DAMAGE', 'PRICE_DIFFERENCE'].includes(input.kind)) throw new PosError('VENDOR_CLAIM_KIND_INVALID');
+  if (!(CLAIM_KINDS as readonly string[]).includes(input.kind)) throw new PosError('VENDOR_CLAIM_KIND_INVALID');
   const reason = input.reason?.trim(); if (!reason) throw new PosError('VENDOR_CLAIM_REASON_REQUIRED');
   if (!input.lines?.length || input.lines.length > 200) throw new PosError('VENDOR_CLAIM_LINES_REQUIRED');
   if (new Set(input.lines.map((line) => line.variantId)).size !== input.lines.length) throw new PosError('VENDOR_CLAIM_LINE_DUPLICATE');
@@ -37,7 +38,7 @@ export async function createVendorClaim(prisma: PrismaClient, actor: AdminActor,
     const variant = variants.find((candidate) => candidate.id === line.variantId)!;
     if (input.kind === 'RETURN' && (variant.baseVariantId || !variant.product.inventoryTracked)) throw new PosError('VENDOR_RETURN_VARIANT_INVALID', 409);
     const unitCost = money(line.unitCostMinor, 'VENDOR_CLAIM_COST_INVALID') ?? variant.storeCosts[0]?.amountMinor ?? variant.vendorMappings[0]?.vendorCostMinor ?? variant.costMinor ?? 0n;
-    return { variantId: line.variantId, quantity: line.quantity, unitCostMinor: unitCost, reason: line.reason?.trim() || null };
+    return { variantId: line.variantId, quantity: line.quantity, unitCostMinor: unitCost, reason: line.reason?.trim() || null, invoiceLineId: line.invoiceLineId ?? null };
   });
   const expectedCreditMinor = lines.reduce((sum, line) => sum + line.unitCostMinor * BigInt(line.quantity), 0n);
   return prisma.$transaction(async (tx) => {

@@ -60,3 +60,27 @@ describe('Production configuration guard', () => {
     expect(variables(productionConfigProblems({ ...safe, RJPOS_TERMINAL_PROVIDER: 'http' }))).toEqual(['RJPOS_TERMINAL_ENDPOINT']);
   });
 });
+
+describe('Invoice receiving server-side RBAC', () => {
+  it('refuses every invoice mutation and read to a cashier before touching the database, and requires manage permission to confirm', async () => {
+    const { InvoiceController, ReceivingHistoryController } = await import('../src/invoices.js');
+    const { TenantContextService } = await import('../src/tenant-context.js');
+    const prisma = { employee: { findFirst: async () => ({ id: 'e1' }) } } as never;
+    const tenants = new TenantContextService();
+    const ocr = { name: 'T', extract: async () => { throw new Error('unused'); } } as never;
+    const invoices = new InvoiceController(prisma, tenants, ocr); const history = new ReceivingHistoryController(prisma, tenants);
+    const as = (role: 'CASHIER' | 'MANAGER' | 'OWNER') => ({ tenantContext: { organizationId: 'o', userId: 'e1', storeId: 's', registerId: 'r', permissions: new Set(rolePermissions[role]) } }) as never;
+    const cashier = as('CASHIER');
+    await expect(invoices.confirm(cashier, 'x', {})).rejects.toThrow('Forbidden');
+    await expect(invoices.manual(cashier, {})).rejects.toThrow('Forbidden');
+    await expect(invoices.addLine(cashier, 'x', { description: 'a' })).rejects.toThrow('Forbidden');
+    await expect(invoices.merge(cashier, 'x', { sourceId: 'y' })).rejects.toThrow('Forbidden');
+    await expect(invoices.addCharge(cashier, 'x', { kind: 'FEE', amountMinor: '1' })).rejects.toThrow('Forbidden');
+    await expect(invoices.update(cashier, 'x', {})).rejects.toThrow('Forbidden');
+    await expect(invoices.review(cashier, 'x')).rejects.toThrow('Forbidden');
+    await expect(history.search(cashier, {})).rejects.toThrow('Forbidden');
+    await expect(history.vendor(cashier, 'v')).rejects.toThrow('Forbidden');
+    // A manager passes the permission gate (the database call then fails on the stub, which proves the gate was cleared).
+    await expect(invoices.confirm(as('MANAGER'), 'x', {})).rejects.not.toThrow('Forbidden');
+  });
+});
